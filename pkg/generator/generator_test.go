@@ -18,8 +18,6 @@ package generator
 
 import (
 	"encoding/base64"
-	"encoding/hex"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -153,87 +151,6 @@ func TestGenerateBase64(t *testing.T) {
 	}
 }
 
-func TestGenerateUUID(t *testing.T) {
-	gen := NewSecretGenerator()
-
-	result, err := gen.GenerateUUID()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
-	if !uuidRegex.MatchString(result) {
-		t.Errorf("result is not a valid UUID v4: %s", result)
-	}
-}
-
-func TestGenerateUUIDUniqueness(t *testing.T) {
-	gen := NewSecretGenerator()
-	iterations := 100
-	results := make(map[string]bool)
-
-	for i := 0; i < iterations; i++ {
-		result, err := gen.GenerateUUID()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if results[result] {
-			t.Errorf("duplicate UUID generated: %s", result)
-		}
-		results[result] = true
-	}
-}
-
-func TestGenerateHex(t *testing.T) {
-	tests := []struct {
-		name      string
-		length    int
-		wantError bool
-	}{
-		{"length 16", 16, false},
-		{"length 32", 32, false},
-		{"zero length", 0, true},
-		{"negative length", -1, true},
-	}
-
-	gen := NewSecretGenerator()
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := gen.GenerateHex(tt.length)
-
-			if tt.wantError {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-				return
-			}
-
-			// Verify it's valid hex
-			decoded, err := hex.DecodeString(result)
-			if err != nil {
-				t.Errorf("result is not valid hex: %v", err)
-				return
-			}
-
-			if len(decoded) != tt.length {
-				t.Errorf("expected decoded length %d, got %d", tt.length, len(decoded))
-			}
-
-			// Hex encoding doubles the length
-			if len(result) != tt.length*2 {
-				t.Errorf("expected result length %d, got %d", tt.length*2, len(result))
-			}
-		})
-	}
-}
-
 func TestGenerate(t *testing.T) {
 	gen := NewSecretGenerator()
 
@@ -246,8 +163,6 @@ func TestGenerate(t *testing.T) {
 		{"string type", "string", 32, false},
 		{"empty type defaults to string", "", 32, false},
 		{"base64 type", "base64", 32, false},
-		{"uuid type", "uuid", 0, false}, // length ignored for uuid
-		{"hex type", "hex", 32, false},
 		{"unknown type", "unknown", 32, true},
 	}
 
@@ -285,19 +200,5 @@ func BenchmarkGenerateBase64(b *testing.B) {
 	gen := NewSecretGenerator()
 	for i := 0; i < b.N; i++ {
 		_, _ = gen.GenerateBase64(32)
-	}
-}
-
-func BenchmarkGenerateUUID(b *testing.B) {
-	gen := NewSecretGenerator()
-	for i := 0; i < b.N; i++ {
-		_, _ = gen.GenerateUUID()
-	}
-}
-
-func BenchmarkGenerateHex(b *testing.B) {
-	gen := NewSecretGenerator()
-	for i := 0; i < b.N; i++ {
-		_, _ = gen.GenerateHex(32)
 	}
 }

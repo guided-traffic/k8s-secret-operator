@@ -19,10 +19,7 @@ package generator
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
-
-	"github.com/google/uuid"
 )
 
 // Generator defines the interface for secret generation
@@ -31,10 +28,6 @@ type Generator interface {
 	GenerateString(length int) (string, error)
 	// GenerateBase64 generates a random base64 encoded string
 	GenerateBase64(length int) (string, error)
-	// GenerateUUID generates a random UUID
-	GenerateUUID() (string, error)
-	// GenerateHex generates a random hex encoded string
-	GenerateHex(length int) (string, error)
 	// Generate generates a value based on the specified type
 	Generate(genType string, length int) (string, error)
 }
@@ -103,30 +96,6 @@ func (g *SecretGenerator) GenerateBase64(length int) (string, error) {
 	return base64.StdEncoding.EncodeToString(randomBytes), nil
 }
 
-// GenerateUUID generates a random UUID (v4)
-func (g *SecretGenerator) GenerateUUID() (string, error) {
-	id, err := uuid.NewRandom()
-	if err != nil {
-		return "", fmt.Errorf("failed to generate UUID: %w", err)
-	}
-	return id.String(), nil
-}
-
-// GenerateHex generates a random hex encoded string
-// The length parameter specifies the number of random bytes before encoding
-func (g *SecretGenerator) GenerateHex(length int) (string, error) {
-	if length <= 0 {
-		return "", fmt.Errorf("length must be positive, got %d", length)
-	}
-
-	randomBytes := make([]byte, length)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-
-	return hex.EncodeToString(randomBytes), nil
-}
-
 // Generate generates a value based on the specified type
 func (g *SecretGenerator) Generate(genType string, length int) (string, error) {
 	switch genType {
@@ -134,10 +103,6 @@ func (g *SecretGenerator) Generate(genType string, length int) (string, error) {
 		return g.GenerateString(length)
 	case "base64":
 		return g.GenerateBase64(length)
-	case "uuid":
-		return g.GenerateUUID()
-	case "hex":
-		return g.GenerateHex(length)
 	default:
 		return "", fmt.Errorf("unknown generation type: %s", genType)
 	}

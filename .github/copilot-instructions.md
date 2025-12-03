@@ -6,6 +6,8 @@ This project implements a custom Kubernetes controller that automatically genera
 
 **Repository:** https://github.com/guided-traffic/k8s-secret-operator
 
+**Note:** This project is in early development and has no releases yet. All changes are considered breaking changes, but since there are no users yet, backwards compatibility is not required at this stage.
+
 ## Architecture
 
 ### Core Components
@@ -247,7 +249,7 @@ k8s-secret-operator/
 
 - [x] Update annotation prefix from `secret-generator.v1.guided-traffic.com/` to `secgen.gtrfc.com/`
 - [x] Remove `regenerate` annotation support
-- [ ] Remove `uuid` and `hex` generation types
+- [x] Remove `uuid` and `hex` generation types
 - [ ] Rename `base64` type to `bytes`
 - [ ] Implement field-specific type/length configuration (`type.<field>`, `length.<field>`)
 - [ ] Remove `secure` annotation (operator is always secure by design)
