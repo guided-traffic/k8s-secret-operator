@@ -1,12 +1,15 @@
 # Helm values for E2E testing
 # Used when installing the operator in Kind cluster
+#
+# Note: For CI pipeline, override with:
+#   --set image.repository=k8s-secret-operator --set image.tag=test
 
 replicaCount: 1
 
 image:
-  repository: k8s-secret-operator
+  repository: ghcr.io/guided-traffic/k8s-secret-operator
   pullPolicy: Never  # Image is loaded directly into Kind
-  tag: "test"
+  tag: "latest"
 
 # Disable imagePullSecrets for local testing
 imagePullSecrets: []

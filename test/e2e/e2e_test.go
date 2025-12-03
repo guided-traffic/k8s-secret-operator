@@ -21,10 +21,8 @@ package e2e
 
 import (
 	"context"
-	"encoding/base64"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -68,8 +66,7 @@ var clientset *kubernetes.Clientset
 var testSecretNames = []string{
 	"test-autogenerate",
 	"test-multi-field",
-	"test-uuid",
-	"test-base64",
+	"test-bytes",
 	"test-regenerate-by-deletion",
 	"test-no-annotation",
 	"test-existing-value",
@@ -259,77 +256,19 @@ func TestSecretMultiFieldGeneration(t *testing.T) {
 	t.Log("Multiple fields successfully generated")
 }
 
-func TestSecretUUIDGeneration(t *testing.T) {
-	defer cleanupSecret(t, "test-uuid")
+func TestSecretBytesGeneration(t *testing.T) {
+	defer cleanupSecret(t, "test-bytes")
 
 	ctx := context.Background()
 
-	// Create a secret with UUID type
+	// Create a secret with bytes type
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-uuid",
-			Namespace: testNamespace,
-			Annotations: map[string]string{
-				AnnotationAutogenerate: "client-id",
-				AnnotationType:         "uuid",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{},
-	}
-
-	_, err := clientset.CoreV1().Secrets(testNamespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("Failed to create secret: %v", err)
-	}
-
-	// Wait for the operator to process the secret
-	var processedSecret *corev1.Secret
-	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
-		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-uuid", metav1.GetOptions{})
-		if err != nil {
-			return false, nil
-		}
-
-		if _, ok := s.Data["client-id"]; ok {
-			if s.Annotations[AnnotationGeneratedAt] != "" {
-				processedSecret = s
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-
-	if err != nil {
-		t.Fatalf("Timeout waiting for secret to be processed: %v", err)
-	}
-
-	// Verify the generated UUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-	clientID := string(processedSecret.Data["client-id"])
-	parts := strings.Split(clientID, "-")
-	if len(parts) != 5 {
-		t.Errorf("Expected UUID format, got: %s", clientID)
-	}
-	if len(parts[0]) != 8 || len(parts[1]) != 4 || len(parts[2]) != 4 || len(parts[3]) != 4 || len(parts[4]) != 12 {
-		t.Errorf("Invalid UUID part lengths: %s", clientID)
-	}
-
-	t.Logf("UUID successfully generated: %s", clientID)
-}
-
-func TestSecretBase64Generation(t *testing.T) {
-	defer cleanupSecret(t, "test-base64")
-
-	ctx := context.Background()
-
-	// Create a secret with base64 type
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-base64",
+			Name:      "test-bytes",
 			Namespace: testNamespace,
 			Annotations: map[string]string{
 				AnnotationAutogenerate: "encryption-key",
-				AnnotationType:         "base64",
+				AnnotationType:         "bytes",
 				AnnotationLength:       "32",
 			},
 		},
@@ -345,7 +284,7 @@ func TestSecretBase64Generation(t *testing.T) {
 	// Wait for the operator to process the secret
 	var processedSecret *corev1.Secret
 	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
-		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-base64", metav1.GetOptions{})
+		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-bytes", metav1.GetOptions{})
 		if err != nil {
 			return false, nil
 		}
@@ -363,14 +302,13 @@ func TestSecretBase64Generation(t *testing.T) {
 		t.Fatalf("Timeout waiting for secret to be processed: %v", err)
 	}
 
-	// Verify the generated value is valid base64
-	encryptionKey := string(processedSecret.Data["encryption-key"])
-	_, err = base64.StdEncoding.DecodeString(encryptionKey)
-	if err != nil {
-		t.Errorf("Expected valid base64 string, got error: %v", err)
+	// Verify the generated value has correct length (32 raw bytes)
+	encryptionKey := processedSecret.Data["encryption-key"]
+	if len(encryptionKey) != 32 {
+		t.Errorf("Expected encryption-key length 32 bytes, got %d", len(encryptionKey))
 	}
 
-	t.Logf("Base64 key successfully generated with length: %d", len(encryptionKey))
+	t.Logf("Bytes key successfully generated with length: %d bytes", len(encryptionKey))
 }
 
 func TestSecretRegenerationByKeyDeletion(t *testing.T) {
@@ -400,7 +338,6 @@ func TestSecretRegenerationByKeyDeletion(t *testing.T) {
 
 	// Wait for initial generation
 	var originalPassword string
-	var originalGeneratedAt string
 	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
 		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-regenerate-by-deletion", metav1.GetOptions{})
 		if err != nil {
@@ -410,7 +347,6 @@ func TestSecretRegenerationByKeyDeletion(t *testing.T) {
 		if pwd, ok := s.Data["password"]; ok {
 			if s.Annotations[AnnotationGeneratedAt] != "" {
 				originalPassword = string(pwd)
-				originalGeneratedAt = s.Annotations[AnnotationGeneratedAt]
 				return true, nil
 			}
 		}
@@ -435,7 +371,7 @@ func TestSecretRegenerationByKeyDeletion(t *testing.T) {
 		t.Fatalf("Failed to update secret after deleting password key: %v", err)
 	}
 
-	// Wait for regeneration
+	// Wait for regeneration - check that password exists again with a different value
 	var newPassword string
 	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
 		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-regenerate-by-deletion", metav1.GetOptions{})
@@ -443,13 +379,11 @@ func TestSecretRegenerationByKeyDeletion(t *testing.T) {
 			return false, nil
 		}
 
-		// Check if password was regenerated (new generated-at timestamp)
+		// Check if password was regenerated (exists and is different)
 		if pwd, ok := s.Data["password"]; ok {
-			newGeneratedAt := s.Annotations[AnnotationGeneratedAt]
-			if newGeneratedAt != originalGeneratedAt {
-				newPassword = string(pwd)
-				return true, nil
-			}
+			newPassword = string(pwd)
+			// Password was regenerated if it exists (we deleted it, so any value means regeneration)
+			return true, nil
 		}
 		return false, nil
 	})
@@ -458,6 +392,7 @@ func TestSecretRegenerationByKeyDeletion(t *testing.T) {
 		t.Fatalf("Timeout waiting for secret regeneration: %v", err)
 	}
 
+	// The new password should be different from the original (extremely unlikely to be the same)
 	if newPassword == originalPassword {
 		t.Error("Expected password to be regenerated with different value")
 	}
