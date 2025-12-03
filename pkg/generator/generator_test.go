@@ -1,0 +1,303 @@
+/*
+Copyright 2025 Guided Traffic.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package generator
+
+import (
+	"encoding/base64"
+	"encoding/hex"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestNewSecretGenerator(t *testing.T) {
+	gen := NewSecretGenerator()
+	if gen == nil {
+		t.Fatal("NewSecretGenerator returned nil")
+	}
+	if gen.charset != AlphanumericCharset {
+		t.Errorf("expected charset %q, got %q", AlphanumericCharset, gen.charset)
+	}
+}
+
+func TestNewSecretGeneratorWithCharset(t *testing.T) {
+	customCharset := "abc123"
+	gen := NewSecretGeneratorWithCharset(customCharset)
+	if gen == nil {
+		t.Fatal("NewSecretGeneratorWithCharset returned nil")
+	}
+	if gen.charset != customCharset {
+		t.Errorf("expected charset %q, got %q", customCharset, gen.charset)
+	}
+}
+
+func TestGenerateString(t *testing.T) {
+	tests := []struct {
+		name      string
+		length    int
+		wantError bool
+	}{
+		{"length 1", 1, false},
+		{"length 16", 16, false},
+		{"length 32", 32, false},
+		{"length 64", 64, false},
+		{"length 128", 128, false},
+		{"zero length", 0, true},
+		{"negative length", -1, true},
+	}
+
+	gen := NewSecretGenerator()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := gen.GenerateString(tt.length)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if len(result) != tt.length {
+				t.Errorf("expected length %d, got %d", tt.length, len(result))
+			}
+
+			// Verify all characters are from the charset
+			for _, c := range result {
+				if !strings.ContainsRune(gen.charset, c) {
+					t.Errorf("result contains character %q not in charset", c)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateStringUniqueness(t *testing.T) {
+	gen := NewSecretGenerator()
+	iterations := 100
+	results := make(map[string]bool)
+
+	for i := 0; i < iterations; i++ {
+		result, err := gen.GenerateString(32)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if results[result] {
+			t.Errorf("duplicate result generated: %s", result)
+		}
+		results[result] = true
+	}
+}
+
+func TestGenerateBase64(t *testing.T) {
+	tests := []struct {
+		name      string
+		length    int
+		wantError bool
+	}{
+		{"length 16", 16, false},
+		{"length 32", 32, false},
+		{"zero length", 0, true},
+		{"negative length", -1, true},
+	}
+
+	gen := NewSecretGenerator()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := gen.GenerateBase64(tt.length)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			// Verify it's valid base64
+			decoded, err := base64.StdEncoding.DecodeString(result)
+			if err != nil {
+				t.Errorf("result is not valid base64: %v", err)
+				return
+			}
+
+			if len(decoded) != tt.length {
+				t.Errorf("expected decoded length %d, got %d", tt.length, len(decoded))
+			}
+		})
+	}
+}
+
+func TestGenerateUUID(t *testing.T) {
+	gen := NewSecretGenerator()
+
+	result, err := gen.GenerateUUID()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !uuidRegex.MatchString(result) {
+		t.Errorf("result is not a valid UUID v4: %s", result)
+	}
+}
+
+func TestGenerateUUIDUniqueness(t *testing.T) {
+	gen := NewSecretGenerator()
+	iterations := 100
+	results := make(map[string]bool)
+
+	for i := 0; i < iterations; i++ {
+		result, err := gen.GenerateUUID()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if results[result] {
+			t.Errorf("duplicate UUID generated: %s", result)
+		}
+		results[result] = true
+	}
+}
+
+func TestGenerateHex(t *testing.T) {
+	tests := []struct {
+		name      string
+		length    int
+		wantError bool
+	}{
+		{"length 16", 16, false},
+		{"length 32", 32, false},
+		{"zero length", 0, true},
+		{"negative length", -1, true},
+	}
+
+	gen := NewSecretGenerator()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := gen.GenerateHex(tt.length)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			// Verify it's valid hex
+			decoded, err := hex.DecodeString(result)
+			if err != nil {
+				t.Errorf("result is not valid hex: %v", err)
+				return
+			}
+
+			if len(decoded) != tt.length {
+				t.Errorf("expected decoded length %d, got %d", tt.length, len(decoded))
+			}
+
+			// Hex encoding doubles the length
+			if len(result) != tt.length*2 {
+				t.Errorf("expected result length %d, got %d", tt.length*2, len(result))
+			}
+		})
+	}
+}
+
+func TestGenerate(t *testing.T) {
+	gen := NewSecretGenerator()
+
+	tests := []struct {
+		name      string
+		genType   string
+		length    int
+		wantError bool
+	}{
+		{"string type", "string", 32, false},
+		{"empty type defaults to string", "", 32, false},
+		{"base64 type", "base64", 32, false},
+		{"uuid type", "uuid", 0, false}, // length ignored for uuid
+		{"hex type", "hex", 32, false},
+		{"unknown type", "unknown", 32, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := gen.Generate(tt.genType, tt.length)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if result == "" {
+				t.Error("expected non-empty result")
+			}
+		})
+	}
+}
+
+func BenchmarkGenerateString(b *testing.B) {
+	gen := NewSecretGenerator()
+	for i := 0; i < b.N; i++ {
+		_, _ = gen.GenerateString(32)
+	}
+}
+
+func BenchmarkGenerateBase64(b *testing.B) {
+	gen := NewSecretGenerator()
+	for i := 0; i < b.N; i++ {
+		_, _ = gen.GenerateBase64(32)
+	}
+}
+
+func BenchmarkGenerateUUID(b *testing.B) {
+	gen := NewSecretGenerator()
+	for i := 0; i < b.N; i++ {
+		_, _ = gen.GenerateUUID()
+	}
+}
+
+func BenchmarkGenerateHex(b *testing.B) {
+	gen := NewSecretGenerator()
+	for i := 0; i < b.N; i++ {
+		_, _ = gen.GenerateHex(32)
+	}
+}

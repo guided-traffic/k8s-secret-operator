@@ -52,10 +52,10 @@ jobs:
             type=sha
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
           labels: |
-            org.opencontainers.image.title=S3 Encryption Proxy
-            org.opencontainers.image.description=A transparent S3 proxy with client-side encryption capabilities
+            org.opencontainers.image.title=Kubernetes Secret Generator
+            org.opencontainers.image.description=A Kubernetes operator that automatically generates random secret values
             org.opencontainers.image.vendor=Guided Traffic
-            org.opencontainers.image.licenses=BSL-1.1
+            org.opencontainers.image.licenses=Apache-2.0
             org.opencontainers.image.documentation=https://github.com/guided-traffic/k8s-secret-generator
             org.opencontainers.image.source=https://github.com/guided-traffic/k8s-secret-generator
 
@@ -83,7 +83,7 @@ jobs:
           provenance: true
           sbom: true
           # Enable attestation features
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=S3 Encryption Proxy
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Kubernetes Secret Generator
 
       - name: Generate and upload SBOM
         if: github.event_name != 'pull_request'

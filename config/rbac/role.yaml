@@ -1,0 +1,14 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: secret-generator-role
+rules:
+  # Secrets permissions
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Events permissions for recording events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
