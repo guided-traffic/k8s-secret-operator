@@ -54,6 +54,11 @@ serviceAccount:
 rbac:
   # Specifies whether RBAC resources should be created
   create: true
+  clusterRoleBinding:
+    # Specifies whether a ClusterRoleBinding should be created.
+    # If disabled, you must manually create RoleBindings in each namespace
+    # where the operator should have access to Secrets.
+    enabled: true
 
 podAnnotations: {}
 podLabels: {}
