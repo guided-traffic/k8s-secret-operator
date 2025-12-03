@@ -265,15 +265,20 @@ k8s-secret-operator/
 - [x] Create ConfigMap template for operator configuration
 - [x] Mount ConfigMap as config file in deployment
 - [x] Add `rbac.clusterRoleBinding.enabled` option (default: true)
-- [ ] Document how to set up RoleBindings for restricted namespace access
+- [x] Document how to set up RoleBindings for restricted namespace access
 
 ### Testing
 
 - [x] Update unit tests for new annotation schema
-- [ ] Update integration tests
+- [x] Update integration tests (envtest-based)
 - [ ] Update e2e tests
 - [x] Add tests for configuration file loading
-- [ ] Add tests for charset configuration
+- [x] Add tests for charset configuration
+
+### CI/CD
+
+- [ ] Integrate integration tests (envtest) into CI pipeline
+- [ ] Generate combined line coverage report (unit tests + integration tests)
 
 ### Documentation
 

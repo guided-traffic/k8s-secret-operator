@@ -217,6 +217,126 @@ The operator follows the standard Kubernetes controller pattern:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## RBAC and Namespace Access
+
+By default, the operator is deployed with a **ClusterRoleBinding**, giving it access to Secrets in **all namespaces**. This is convenient for most use cases but may not meet your security requirements.
+
+### Restricting to Specific Namespaces
+
+For environments where you need fine-grained control over which namespaces the operator can access, you can disable the ClusterRoleBinding and create RoleBindings manually in specific namespaces.
+
+#### Step 1: Disable ClusterRoleBinding
+
+Install or upgrade the Helm chart with the ClusterRoleBinding disabled:
+
+```bash
+helm install k8s-secret-operator k8s-secret-operator/k8s-secret-operator \
+  --set rbac.clusterRoleBinding.enabled=false
+```
+
+Or in your `values.yaml`:
+
+```yaml
+rbac:
+  clusterRoleBinding:
+    enabled: false
+```
+
+#### Step 2: Create RoleBindings in Target Namespaces
+
+Create a RoleBinding in each namespace where the operator should have access. The RoleBinding references the ClusterRole (which is still created) but only grants access within that specific namespace.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-secret-operator
+  namespace: my-app-namespace  # The namespace to grant access to
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-secret-operator  # Must match the ClusterRole name from the Helm release
+subjects:
+  - kind: ServiceAccount
+    name: k8s-secret-operator  # Must match the ServiceAccount name from the Helm release
+    namespace: k8s-secret-operator  # The namespace where the operator is deployed
+```
+
+> **Note:** If you customized the Helm release name or used `fullnameOverride`, adjust the ClusterRole and ServiceAccount names accordingly.
+
+#### Example: Granting Access to Multiple Namespaces
+
+To grant access to `production`, `staging`, and `development` namespaces:
+
+```bash
+# Create RoleBindings in each namespace
+for ns in production staging development; do
+  kubectl create rolebinding k8s-secret-operator \
+    --clusterrole=k8s-secret-operator \
+    --serviceaccount=k8s-secret-operator:k8s-secret-operator \
+    --namespace=$ns
+done
+```
+
+Or using a manifest:
+
+```yaml
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-secret-operator
+  namespace: production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-secret-operator
+subjects:
+  - kind: ServiceAccount
+    name: k8s-secret-operator
+    namespace: k8s-secret-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-secret-operator
+  namespace: staging
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-secret-operator
+subjects:
+  - kind: ServiceAccount
+    name: k8s-secret-operator
+    namespace: k8s-secret-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-secret-operator
+  namespace: development
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-secret-operator
+subjects:
+  - kind: ServiceAccount
+    name: k8s-secret-operator
+    namespace: k8s-secret-operator
+```
+
+### Why Use a ClusterRole with RoleBindings?
+
+You might wonder why we reference a **ClusterRole** in the RoleBinding instead of creating namespace-scoped Roles. This is a common Kubernetes pattern:
+
+- **ClusterRole** defines the permissions (what actions can be performed on which resources)
+- **RoleBinding** grants those permissions within a specific namespace
+
+This approach allows you to:
+1. Define the permissions once (in the ClusterRole)
+2. Selectively grant those permissions per namespace (via RoleBindings)
+3. Easily add/remove namespace access without modifying the operator deployment
+
 ## Security
 
 - Uses `crypto/rand` for cryptographically secure random number generation
