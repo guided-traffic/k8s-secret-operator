@@ -49,9 +49,6 @@ const (
 	// AnnotationLength specifies the length of the generated value
 	AnnotationLength = AnnotationPrefix + "length"
 
-	// AnnotationSecure indicates the value was securely generated
-	AnnotationSecure = AnnotationPrefix + "secure"
-
 	// AnnotationGeneratedAt indicates when the value was generated
 	AnnotationGeneratedAt = AnnotationPrefix + "generated-at"
 
@@ -162,8 +159,8 @@ func TestSecretAutoGeneration(t *testing.T) {
 
 		// Check if password field was generated
 		if _, ok := s.Data["password"]; ok {
-			// Check if secure annotation was set
-			if s.Annotations[AnnotationSecure] == "yes" {
+			// Check if generated-at annotation was set
+			if s.Annotations[AnnotationGeneratedAt] != "" {
 				processedSecret = s
 				return true, nil
 			}
@@ -234,7 +231,7 @@ func TestSecretMultiFieldGeneration(t *testing.T) {
 		_, hasApiKey := s.Data["api-key"]
 		_, hasToken := s.Data["token"]
 
-		if hasPassword && hasApiKey && hasToken && s.Annotations[AnnotationSecure] == "yes" {
+		if hasPassword && hasApiKey && hasToken && s.Annotations[AnnotationGeneratedAt] != "" {
 			processedSecret = s
 			return true, nil
 		}
@@ -295,7 +292,7 @@ func TestSecretUUIDGeneration(t *testing.T) {
 		}
 
 		if _, ok := s.Data["client-id"]; ok {
-			if s.Annotations[AnnotationSecure] == "yes" {
+			if s.Annotations[AnnotationGeneratedAt] != "" {
 				processedSecret = s
 				return true, nil
 			}
@@ -354,7 +351,7 @@ func TestSecretBase64Generation(t *testing.T) {
 		}
 
 		if _, ok := s.Data["encryption-key"]; ok {
-			if s.Annotations[AnnotationSecure] == "yes" {
+			if s.Annotations[AnnotationGeneratedAt] != "" {
 				processedSecret = s
 				return true, nil
 			}
@@ -411,7 +408,7 @@ func TestSecretRegenerationByKeyDeletion(t *testing.T) {
 		}
 
 		if pwd, ok := s.Data["password"]; ok {
-			if s.Annotations[AnnotationSecure] == "yes" {
+			if s.Annotations[AnnotationGeneratedAt] != "" {
 				originalPassword = string(pwd)
 				originalGeneratedAt = s.Annotations[AnnotationGeneratedAt]
 				return true, nil
@@ -501,7 +498,7 @@ func TestSecretWithoutAnnotationNotProcessed(t *testing.T) {
 	}
 
 	// Check that no operator annotations were added
-	if _, ok := s.Annotations[AnnotationSecure]; ok {
+	if _, ok := s.Annotations[AnnotationGeneratedAt]; ok {
 		t.Error("Secret without autogenerate annotation should not be processed")
 	}
 
@@ -550,7 +547,7 @@ func TestSecretExistingValuePreserved(t *testing.T) {
 
 		// Check if new-field was generated
 		if _, ok := s.Data["new-field"]; ok {
-			if s.Annotations[AnnotationSecure] == "yes" {
+			if s.Annotations[AnnotationGeneratedAt] != "" {
 				processedSecret = s
 				return true, nil
 			}

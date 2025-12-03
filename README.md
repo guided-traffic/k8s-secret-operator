@@ -56,7 +56,6 @@ metadata:
   annotations:
     secgen.gtrfc.com/autogenerate: password
     secgen.gtrfc.com/type: string
-    secgen.gtrfc.com/secure: "yes"
     secgen.gtrfc.com/generated-at: "2025-12-03T10:00:00+01:00"
 type: Opaque
 data:

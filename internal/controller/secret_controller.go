@@ -46,9 +46,6 @@ const (
 	// AnnotationLength specifies the length of the generated value
 	AnnotationLength = AnnotationPrefix + "length"
 
-	// AnnotationSecure indicates the value was securely generated
-	AnnotationSecure = AnnotationPrefix + "secure"
-
 	// AnnotationGeneratedAt indicates when the value was generated
 	AnnotationGeneratedAt = AnnotationPrefix + "generated-at"
 )
@@ -132,7 +129,6 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			secret.Annotations = make(map[string]string)
 		}
 		secret.Annotations[AnnotationType] = genType
-		secret.Annotations[AnnotationSecure] = "yes"
 		secret.Annotations[AnnotationGeneratedAt] = time.Now().Format(time.RFC3339)
 
 		// Update the secret

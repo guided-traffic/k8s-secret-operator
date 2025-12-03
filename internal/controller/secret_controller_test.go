@@ -295,10 +295,6 @@ func TestReconcile(t *testing.T) {
 				}
 
 				// Verify metadata annotations were added
-				if updatedSecret.Annotations[AnnotationSecure] != "yes" {
-					t.Error("expected secure annotation to be set to 'yes'")
-				}
-
 				if _, ok := updatedSecret.Annotations[AnnotationGeneratedAt]; !ok {
 					t.Error("expected generated-at annotation to be set")
 				}

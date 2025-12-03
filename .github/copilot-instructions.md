@@ -251,8 +251,8 @@ k8s-secret-operator/
 - [x] Remove `regenerate` annotation support
 - [x] Remove `uuid` and `hex` generation types
 - [x] Rename `base64` type to `bytes`
+- [x] Remove `secure` annotation (operator is always secure by design)
 - [ ] Implement field-specific type/length configuration (`type.<field>`, `length.<field>`)
-- [ ] Remove `secure` annotation (operator is always secure by design)
 - [ ] Simplify operator-set annotations to only `generated-at`
 - [ ] Implement configuration file loading at startup
 - [ ] Add configurable charset for `string` type (uppercase, lowercase, numbers, specialChars, allowedSpecialChars)
