@@ -61,6 +61,8 @@ rbac:
     enabled: true
 
 podAnnotations: {}
+# Extra labels to add to pods (not added to deployment selector)
+# Useful for labels like sidecar.istio.io/inject, prometheus.io/scrape, etc.
 podLabels: {}
 
 podSecurityContext:
