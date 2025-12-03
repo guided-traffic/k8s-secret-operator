@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23.5-alpine AS builder
+FROM golang:1.25.5-alpine AS builder
 
 # Build arguments for metadata
 ARG BUILD_NUMBER
