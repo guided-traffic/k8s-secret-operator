@@ -261,9 +261,9 @@ k8s-secret-operator/
 
 ### Helm Chart
 
-- [ ] Add `config` section to `values.yaml` with all configuration options
-- [ ] Create ConfigMap template for operator configuration
-- [ ] Mount ConfigMap as config file in deployment
+- [x] Add `config` section to `values.yaml` with all configuration options
+- [x] Create ConfigMap template for operator configuration
+- [x] Mount ConfigMap as config file in deployment
 - [ ] Add `rbac.clusterRoleBinding.enabled` option (default: true)
 - [ ] Document how to set up RoleBindings for restricted namespace access
 

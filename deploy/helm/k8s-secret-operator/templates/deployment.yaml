@@ -46,11 +46,6 @@ spec:
             {{- if .Values.controller.leaderElection }}
             - --leader-elect
             {{- end }}
-          env:
-            - name: DEFAULT_LENGTH
-              value: "{{ .Values.controller.defaultLength }}"
-            - name: DEFAULT_TYPE
-              value: "{{ .Values.controller.defaultType }}"
           ports:
             - name: metrics
               containerPort: {{ .Values.service.port }}
@@ -70,12 +65,18 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.volumeMounts }}
           volumeMounts:
+            - name: config
+              mountPath: /etc/secret-operator
+              readOnly: true
+          {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
           {{- end }}
-      {{- with .Values.volumes }}
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "k8s-secret-operator.fullname" . }}-config
+      {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.nodeSelector }}

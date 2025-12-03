@@ -210,7 +210,7 @@ func TestGetFieldType(t *testing.T) {
 		{
 			name: "field-specific overrides default",
 			annotations: map[string]string{
-				AnnotationType:                         "string",
+				AnnotationType:                          "string",
 				AnnotationTypePrefix + "encryption-key": "bytes",
 			},
 			field:    "encryption-key",
@@ -232,7 +232,7 @@ func TestGetFieldType(t *testing.T) {
 			name: "different field uses default",
 			annotations: map[string]string{
 				AnnotationTypePrefix + "encryption-key": "bytes",
-				AnnotationType:                         "string",
+				AnnotationType:                          "string",
 			},
 			field:    "password",
 			expected: "string",
@@ -275,7 +275,7 @@ func TestGetFieldLength(t *testing.T) {
 		{
 			name: "field-specific overrides default",
 			annotations: map[string]string{
-				AnnotationLength:                         "24",
+				AnnotationLength: "24",
 				AnnotationLengthPrefix + "encryption-key": "64",
 			},
 			field:    "encryption-key",
@@ -297,7 +297,7 @@ func TestGetFieldLength(t *testing.T) {
 			name: "different field uses default",
 			annotations: map[string]string{
 				AnnotationLengthPrefix + "encryption-key": "64",
-				AnnotationLength:                         "24",
+				AnnotationLength: "24",
 			},
 			field:    "password",
 			expected: 24,
@@ -312,7 +312,7 @@ func TestGetFieldLength(t *testing.T) {
 			name: "invalid field-specific uses default annotation",
 			annotations: map[string]string{
 				AnnotationLengthPrefix + "password": "invalid",
-				AnnotationLength:                   "48",
+				AnnotationLength:                    "48",
 			},
 			field:    "password",
 			expected: 48,
@@ -413,10 +413,10 @@ func TestReconcile(t *testing.T) {
 					Name:      "test-secret",
 					Namespace: "default",
 					Annotations: map[string]string{
-						AnnotationAutogenerate:                   "password,encryption-key",
-						AnnotationType:                           "string",
-						AnnotationLength:                         "24",
-						AnnotationTypePrefix + "encryption-key":  "bytes",
+						AnnotationAutogenerate:                    "password,encryption-key",
+						AnnotationType:                            "string",
+						AnnotationLength:                          "24",
+						AnnotationTypePrefix + "encryption-key":   "bytes",
 						AnnotationLengthPrefix + "encryption-key": "32",
 					},
 				},

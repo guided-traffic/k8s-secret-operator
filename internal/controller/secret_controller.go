@@ -152,7 +152,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 		// Emit success event
 		r.EventRecorder.Event(&secret, corev1.EventTypeNormal, EventReasonGenerationSucceeded,
-			fmt.Sprintf("Successfully generated values for secret fields"))
+			"Successfully generated values for secret fields")
 
 		logger.Info("Successfully updated Secret with generated values")
 	}

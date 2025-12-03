@@ -15,12 +15,29 @@ fullnameOverride: ""
 
 # Controller configuration
 controller:
-  # Default length for generated secrets
-  defaultLength: 32
-  # Default type for generated values (string, base64, uuid)
-  defaultType: "string"
   # Enable leader election for high availability
   leaderElection: true
+
+# Operator configuration (written 1:1 to ConfigMap and mounted as config file)
+# See: /etc/secret-operator/config.yaml
+config:
+  defaults:
+    # Default generation type: "string" or "bytes"
+    type: string
+    # Default length for generated values
+    length: 32
+    # String generation options (only used when type is "string")
+    string:
+      # Include uppercase letters (A-Z)
+      uppercase: true
+      # Include lowercase letters (a-z)
+      lowercase: true
+      # Include numbers (0-9)
+      numbers: true
+      # Include special characters
+      specialChars: false
+      # Which special characters to use (when specialChars is true)
+      allowedSpecialChars: "!@#$%^&*()_+-=[]{}|;:,.<>?"
 
 serviceAccount:
   # Specifies whether a service account should be created

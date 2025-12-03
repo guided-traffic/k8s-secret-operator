@@ -19,6 +19,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -80,12 +81,15 @@ func NewDefaultConfig() *Config {
 func LoadConfig(path string) (*Config, error) {
 	config := NewDefaultConfig()
 
+	// Clean the path to prevent directory traversal
+	cleanPath := filepath.Clean(path)
+
 	// Check if file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
 		return config, nil
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
