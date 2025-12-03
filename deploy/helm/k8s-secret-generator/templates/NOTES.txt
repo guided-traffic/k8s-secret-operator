@@ -1,0 +1,37 @@
+🔐 Kubernetes Secret Generator has been installed!
+
+The controller is now watching for Secrets with the annotation:
+  secret-generator.v1.guided-traffic.com/autogenerate
+
+Example usage:
+---------------
+Create a Secret with the autogenerate annotation:
+
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: my-secret
+    annotations:
+      secret-generator.v1.guided-traffic.com/autogenerate: "password,api-key"
+      secret-generator.v1.guided-traffic.com/length: "32"
+      secret-generator.v1.guided-traffic.com/type: "string"
+  type: Opaque
+  data:
+    username: YWRtaW4=  # existing value, won't be changed
+
+The controller will automatically generate values for 'password' and 'api-key' fields.
+
+Check controller status:
+------------------------
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-secret-generator.name" . }}
+
+View controller logs:
+---------------------
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-secret-generator.name" . }}
+
+{{- if .Values.serviceMonitor.enabled }}
+
+Prometheus ServiceMonitor:
+--------------------------
+  A ServiceMonitor has been created for Prometheus Operator.
+{{- end }}
