@@ -65,9 +65,55 @@ test-unit: envtest ## Run unit tests only.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GOTEST) -v -short ./...
 
 .PHONY: test-integration
-test-integration: ## Run integration tests only.
+test-integration: envtest ## Run integration tests only.
 	@echo "Running integration tests..."
-	$(GOTEST) -v -tags=integration -count=1 -timeout=60m ./test/integration/...
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GOTEST) -v -tags=integration -count=1 -timeout=60m ./test/integration/...
+
+.PHONY: test-e2e
+test-e2e: ## Run E2E tests against a running Kind cluster.
+	@echo "Running E2E tests..."
+	$(GOTEST) -v -tags=e2e -count=1 -timeout=30m ./test/e2e/...
+
+.PHONY: kind-create
+kind-create: ## Create a Kind cluster for local testing.
+	@echo "Creating Kind cluster..."
+	@cat << EOF > /tmp/kind-config.yaml
+	kind: Cluster
+	apiVersion: kind.x-k8s.io/v1alpha4
+	name: secret-generator-test
+	nodes:
+	- role: control-plane
+	containerdConfigPatches:
+	- |-
+	  [plugins."io.containerd.grpc.v1.cri".containerd]
+	    snapshotter = "native"
+	    disable_snapshot_annotations = false
+	EOF
+	kind create cluster --config /tmp/kind-config.yaml --wait 120s
+
+.PHONY: kind-delete
+kind-delete: ## Delete the Kind test cluster.
+	@echo "Deleting Kind cluster..."
+	kind delete cluster --name secret-generator-test
+
+.PHONY: kind-load
+kind-load: docker-build ## Build and load the operator image into Kind.
+	@echo "Loading image into Kind cluster..."
+	docker save ${IMG} | docker exec -i secret-generator-test-control-plane ctr --namespace=k8s.io images import -
+
+.PHONY: e2e-local
+e2e-local: kind-create kind-load ## Run full E2E test locally with Kind.
+	@echo "Installing operator via Helm..."
+	helm install k8s-secret-generator deploy/helm/k8s-secret-generator \
+		--namespace k8s-secret-generator-system \
+		--create-namespace \
+		--values test/e2e/helm-values.yaml \
+		--wait \
+		--timeout 120s
+	@echo "Running E2E tests..."
+	$(MAKE) test-e2e
+	@echo "Cleaning up..."
+	$(MAKE) kind-delete
 
 .PHONY: test-coverage
 test-coverage: test ## Run tests and show coverage report.
