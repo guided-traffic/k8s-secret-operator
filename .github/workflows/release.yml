@@ -200,11 +200,6 @@ jobs:
           username: guidedtraffic
           password: ${{ secrets.DOCKERHUB_PAT }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker
-
       - name: Create Kind config for DinD
         run: |
           cat << EOF > kind-config.yaml
@@ -240,8 +235,12 @@ jobs:
 
       - name: Build and load operator image
         run: |
-          make docker-build IMG=k8s-secret-operator:test
-          kind load docker-image k8s-secret-operator:test --name secret-operator-test
+          # Build image and save as tar archive
+          docker build -f Containerfile -t k8s-secret-operator:test .
+          docker save k8s-secret-operator:test -o /tmp/operator-image.tar
+          # Load via tar archive to avoid ctr import issues
+          kind load image-archive /tmp/operator-image.tar --name secret-operator-test
+          rm /tmp/operator-image.tar
 
       - name: Install Helm
         uses: azure/setup-helm@v4
