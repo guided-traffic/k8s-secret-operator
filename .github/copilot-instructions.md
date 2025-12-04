@@ -284,7 +284,7 @@ k8s-secret-operator/
 
 ### Documentation
 
-- [ ] Update README.md with new annotation schema
-- [ ] Update sample secrets in `config/samples/`
-- [ ] Update Helm chart values documentation
-- [ ] Document configuration file options
+- [x] Update README.md with new annotation schema
+- [x] Update sample secrets in `config/samples/`
+- [x] Update Helm chart values documentation
+- [x] Document configuration file options

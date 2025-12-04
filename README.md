@@ -11,8 +11,9 @@ A Kubernetes operator that automatically generates random secret values. Use it 
 
 - 🔐 **Automatic Secret Generation** - Automatically generates cryptographically secure random values for Kubernetes Secrets
 - 🎯 **Annotation-Based** - Simple annotation-based configuration, no CRDs required
--  **Configurable Length** - Customize the length of generated secrets
-- 🔢 **Multiple Types** - Support for string and bytes generation
+- 📏 **Configurable Length** - Customize the length of generated secrets per field
+- 🔢 **Multiple Types** - Support for `string` and `bytes` generation
+- 🔤 **Customizable Charset** - Configure which characters to include in generated strings
 - ✅ **Idempotent** - Only generates values for empty fields, preserves existing data
 
 ## Quick Start
@@ -56,7 +57,6 @@ metadata:
   name: example-secret
   annotations:
     secgen.gtrfc.com/autogenerate: password
-    secgen.gtrfc.com/type: string
     secgen.gtrfc.com/generated-at: "2025-12-03T10:00:00+01:00"
 type: Opaque
 data:
@@ -64,30 +64,108 @@ data:
   password: TWVwSU83L2huNXBralNTMHFwU3VKSkkwNmN4NmRpNTBBcVpuVDlLOQ==
 ```
 
-## Configuration
+## Annotations
 
-### Annotations
+All annotations use the prefix `secgen.gtrfc.com/`.
 
-All annotations use the prefix `secgen.gtrfc.com/`:
+### Core Annotations
 
 | Annotation | Description | Default |
 |------------|-------------|---------|
 | `autogenerate` | Comma-separated list of field names to auto-generate | *required* |
-| `type` | Type of generated value: `string`, `bytes` | `string` |
-| `length` | Length of generated string | `32` |
+| `type` | Default type for all fields: `string` or `bytes` | `string` |
+| `length` | Default length for all fields | `32` |
+| `type.<field>` | Type for a specific field (overrides `type`) | - |
+| `length.<field>` | Length for a specific field (overrides `length`) | - |
+| `generated-at` | Timestamp when values were generated (set by operator) | - |
 
-### Regenerating Secrets
+### Generation Types
+
+| Type | Description | `length` meaning | Use-Case |
+|------|-------------|------------------|----------|
+| `string` | Alphanumeric string | Number of characters | Passwords, API keys, tokens |
+| `bytes` | Raw random bytes | Number of bytes | Encryption keys, binary secrets |
+
+> **Note:** Kubernetes stores all secret data Base64-encoded. The `bytes` type generates raw bytes which are then Base64-encoded by Kubernetes when stored.
+
+## Examples
+
+### Generate Multiple Fields
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multi-field-secret
+  annotations:
+    secgen.gtrfc.com/autogenerate: password,api-key,token
+type: Opaque
+```
+
+### Custom Length
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: custom-length-secret
+  annotations:
+    secgen.gtrfc.com/autogenerate: password
+    secgen.gtrfc.com/length: "64"
+type: Opaque
+```
+
+### Generate Raw Bytes (e.g., for Encryption Keys)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: encryption-secret
+  annotations:
+    secgen.gtrfc.com/autogenerate: encryption-key
+    secgen.gtrfc.com/type: bytes
+    secgen.gtrfc.com/length: "32"
+type: Opaque
+```
+
+### Different Types per Field
+
+Generate a password (string) and an encryption key (bytes) with different lengths:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mixed-secret
+  annotations:
+    secgen.gtrfc.com/autogenerate: password,encryption-key
+    secgen.gtrfc.com/type: string
+    secgen.gtrfc.com/length: "24"
+    secgen.gtrfc.com/type.encryption-key: bytes
+    secgen.gtrfc.com/length.encryption-key: "32"
+type: Opaque
+data:
+  username: c29tZXVzZXI=
+```
+
+Result:
+- `password`: 24-character alphanumeric string
+- `encryption-key`: 32 random bytes (Base64-encoded)
+- `username`: preserved as-is
+
+## Regenerating Secrets
 
 The operator respects existing values and will **not** overwrite them. To regenerate a secret value, you have two options:
 
-#### Option 1: Delete and recreate the Secret
+### Option 1: Delete and Recreate the Secret
 
 ```bash
 kubectl delete secret my-secret
 kubectl apply -f my-secret.yaml
 ```
 
-#### Option 2: Delete specific keys from the Secret
+### Option 2: Delete Specific Keys from the Secret
 
 To regenerate only specific fields, delete those keys from the Secret's data:
 
@@ -105,117 +183,191 @@ kubectl edit secret my-secret
 
 The operator will automatically detect the missing field and generate a new value for it.
 
-### Examples
+## Helm Chart Configuration
 
-#### Generate multiple fields
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: multi-field-secret
-  annotations:
-    secgen.gtrfc.com/autogenerate: password,api-key,token
-type: Opaque
-```
-
-#### Custom length
+The operator's default behavior can be customized via Helm values:
 
 ```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: custom-length-secret
-  annotations:
-    secgen.gtrfc.com/autogenerate: password
-    secgen.gtrfc.com/length: "64"
-type: Opaque
+config:
+  defaults:
+    # Default generation type: "string" or "bytes"
+    type: string
+    # Default length for generated values
+    length: 32
+    # String generation options (only used when type is "string")
+    string:
+      # Include uppercase letters (A-Z)
+      uppercase: true
+      # Include lowercase letters (a-z)
+      lowercase: true
+      # Include numbers (0-9)
+      numbers: true
+      # Include special characters
+      specialChars: false
+      # Which special characters to use (when specialChars is true)
+      allowedSpecialChars: "!@#$%^&*()_+-=[]{}|;:,.<>?"
 ```
 
-#### Generate raw bytes (e.g., for encryption keys)
+### Example: Enable Special Characters by Default
+
+```bash
+helm install k8s-secret-operator k8s-secret-operator/k8s-secret-operator \
+  --set config.defaults.string.specialChars=true \
+  --set config.defaults.string.allowedSpecialChars='!@#$%'
+```
+
+> **Note:** At least one of `uppercase`, `lowercase`, `numbers`, or `specialChars` must be enabled.
+
+For the complete list of all Helm chart values including image configuration, resources, autoscaling, monitoring, and more, see the [Helm Chart Documentation](deploy/helm/k8s-secret-operator/README.md).
+
+## Configuration File
+
+The operator reads its configuration from a YAML file at startup. This allows customizing default behavior without code changes.
+
+### File Location
+
+| Deployment Method | Configuration Path |
+|-------------------|-------------------|
+| Helm Chart | `/etc/secret-operator/config.yaml` (via ConfigMap) |
+| Manual Deployment | `/etc/secret-operator/config.yaml` (default) |
+
+When deployed via Helm, the configuration is managed through the `config` section in `values.yaml` and automatically mounted as a ConfigMap.
+
+### Configuration Options
 
 ```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: bytes-secret
-  annotations:
-    secgen.gtrfc.com/autogenerate: encryption-key
-    secgen.gtrfc.com/type: bytes
-    secgen.gtrfc.com/length: "32"
-type: Opaque
+defaults:
+  # Generation type: "string" or "bytes"
+  # - string: Generates alphanumeric characters (configurable charset)
+  # - bytes: Generates raw random bytes
+  type: string
+
+  # Length of generated values
+  # - For "string": number of characters
+  # - For "bytes": number of bytes
+  length: 32
+
+  # String generation options (only used when type is "string")
+  string:
+    # Include uppercase letters (A-Z)
+    uppercase: true
+
+    # Include lowercase letters (a-z)
+    lowercase: true
+
+    # Include numbers (0-9)
+    numbers: true
+
+    # Include special characters
+    specialChars: false
+
+    # Which special characters to use (when specialChars is true)
+    allowedSpecialChars: "!@#$%^&*()_+-=[]{}|;:,.<>?"
 ```
 
-## Development
+### Configuration Reference
 
-### Prerequisites
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `defaults.type` | string | `string` | Default generation type. Valid values: `string`, `bytes` |
+| `defaults.length` | integer | `32` | Default length for generated values (must be > 0) |
+| `defaults.string.uppercase` | boolean | `true` | Include uppercase letters (A-Z) in generated strings |
+| `defaults.string.lowercase` | boolean | `true` | Include lowercase letters (a-z) in generated strings |
+| `defaults.string.numbers` | boolean | `true` | Include numbers (0-9) in generated strings |
+| `defaults.string.specialChars` | boolean | `false` | Include special characters in generated strings |
+| `defaults.string.allowedSpecialChars` | string | `!@#$%^&*()_+-=[]{}|;:,.<>?` | Which special characters to use when `specialChars` is enabled |
 
-- Go 1.21+
-- Docker
-- kubectl
-- Access to a Kubernetes cluster (or kind/minikube for local development)
+### Validation Rules
 
-### Building
+The operator validates the configuration at startup and will fail to start if:
+
+1. **Invalid type**: `defaults.type` must be either `string` or `bytes`
+2. **Invalid length**: `defaults.length` must be a positive integer
+3. **No charset enabled**: At least one of `uppercase`, `lowercase`, `numbers`, or `specialChars` must be `true`
+4. **Empty special chars**: If `specialChars` is `true`, `allowedSpecialChars` must not be empty
+
+### Configuration Priority
+
+Configuration values are applied in the following order (highest priority first):
+
+1. **Per-field annotations** (`secgen.gtrfc.com/type.<field>`, `secgen.gtrfc.com/length.<field>`)
+2. **Secret-level annotations** (`secgen.gtrfc.com/type`, `secgen.gtrfc.com/length`)
+3. **Configuration file** (`/etc/secret-operator/config.yaml`)
+4. **Built-in defaults** (used if config file doesn't exist)
+
+### Example Configurations
+
+#### Passwords with Special Characters
+
+```yaml
+defaults:
+  type: string
+  length: 24
+  string:
+    uppercase: true
+    lowercase: true
+    numbers: true
+    specialChars: true
+    allowedSpecialChars: "!@#$%&*"
+```
+
+#### Numbers Only (e.g., PINs)
+
+```yaml
+defaults:
+  type: string
+  length: 6
+  string:
+    uppercase: false
+    lowercase: false
+    numbers: true
+    specialChars: false
+```
+
+#### Encryption Keys (Raw Bytes)
+
+```yaml
+defaults:
+  type: bytes
+  length: 32
+```
+
+### Manual Deployment
+
+If you're deploying the operator without Helm, create the configuration file manually:
 
 ```bash
-# Build the binary
-make build
+# Create the config directory
+sudo mkdir -p /etc/secret-operator
 
-# Build the Docker image
-make docker-build
-
-# Run tests
-make test
-
-# Run linter
-make lint
+# Create the config file
+sudo cat > /etc/secret-operator/config.yaml << 'EOF'
+defaults:
+  type: string
+  length: 32
+  string:
+    uppercase: true
+    lowercase: true
+    numbers: true
+    specialChars: false
+    allowedSpecialChars: "!@#$%^&*()_+-=[]{}|;:,.<>?"
+EOF
 ```
 
-### Running Locally
+The operator will use built-in defaults if the configuration file doesn't exist.
+
+## Error Handling
+
+When an error occurs (e.g., invalid annotation values), the operator:
+
+1. Does **not** modify the Secret
+2. Creates a **Warning Event** on the Secret with details about the error
+3. Logs the error for debugging
+
+You can view errors with:
 
 ```bash
-# Run against your current kubeconfig context
-make run
-```
-
-### Testing with Kind
-
-```bash
-# Create a kind cluster
-kind create cluster
-
-# Deploy the operator
-make deploy
-
-# Apply a sample secret
-kubectl apply -f config/samples/secret_example.yaml
-
-# Check the result
-kubectl get secret example-secret -o yaml
-```
-
-## Architecture
-
-The operator follows the standard Kubernetes controller pattern:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                        │
-│  ┌───────────────┐       ┌──────────────────────────────┐  │
-│  │    Secret     │       │    Secret Operator    │  │
-│  │  (with anno-  │◄─────►│  ┌────────────────────────┐  │
-│  │   tations)    │       │  │   Secret Controller    │  │
-│  └───────────────┘       │  │   - Watch Secrets      │  │
-│                          │  │   - Filter by anno.    │  │
-│                          │  │   - Reconcile          │  │
-│                          │  └────────────────────────┘  │
-│                          │  ┌────────────────────────┐  │
-│                          │  │   Value Generator      │  │
-│                          │  │   - crypto/rand        │  │
-│                          │  │   - Multiple types     │  │
-│                          │  └────────────────────────┘  │
-│                          └──────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+kubectl describe secret <name>
 ```
 
 ## RBAC and Namespace Access

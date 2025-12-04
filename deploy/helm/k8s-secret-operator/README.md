@@ -2,6 +2,8 @@
 
 A Kubernetes controller that automatically generates random secret values for Secrets with specific annotations.
 
+For usage documentation and annotation reference, see the [main README](../../../README.md).
+
 ## Installation
 
 ```bash
