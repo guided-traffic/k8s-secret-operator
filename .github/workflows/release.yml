@@ -336,151 +336,225 @@ jobs:
     name: Combined Coverage Report
     runs-on: self-hosted
     needs: [unit-tests, integration-tests]
+    if: always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success')
+    permissions:
+      contents: read  # Read only - semantic-release will commit the badge
+      pull-requests: write  # Needed to comment on PRs
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Download unit coverage
+      - name: Download unit test coverage
         uses: actions/download-artifact@v6
         with:
           name: unit-coverage
-          path: coverage/
+        continue-on-error: true
 
-      - name: Download integration coverage
+      - name: Download integration test coverage
         uses: actions/download-artifact@v6
         with:
           name: integration-coverage
-          path: coverage/
+        continue-on-error: true
 
-      - name: Install gocovmerge
-        run: go install github.com/wadey/gocovmerge@latest
-
-      - name: Merge coverage profiles
+      - name: Merge coverage reports
+        id: merge-coverage
         run: |
+          echo "Merging coverage reports..."
+
+          # Check which coverage files exist
+          COVERAGE_FILES=""
+          if [ -f "unit.out" ]; then
+            echo "✓ Unit test coverage found"
+            COVERAGE_FILES="$COVERAGE_FILES unit.out"
+          fi
+          if [ -f "integration.out" ]; then
+            echo "✓ Integration test coverage found"
+            COVERAGE_FILES="$COVERAGE_FILES integration.out"
+          fi
+
+          if [ -z "$COVERAGE_FILES" ]; then
+            echo "ERROR: No coverage files found"
+            exit 1
+          fi
+
+          # Merge coverage files
+          echo "mode: set" > coverage-merged.out
+          grep -h -v "^mode:" $COVERAGE_FILES >> coverage-merged.out || true
+
+          # Generate reports
           mkdir -p coverage
-          gocovmerge coverage/unit.out coverage/integration.out > coverage/combined.out
-          go tool cover -func=coverage/combined.out > coverage/combined.txt
+          go tool cover -func=coverage-merged.out > coverage/coverage.txt
+          go tool cover -html=coverage-merged.out -o coverage/coverage.html
+
+          # Extract total coverage
+          TOTAL_COVERAGE=$(grep "total:" coverage/coverage.txt | awk '{print $3}' | sed 's/%//')
+          echo "percentage=$TOTAL_COVERAGE" >> $GITHUB_OUTPUT
+          echo ""
+          echo "========================================"
+          echo "📊 Combined Coverage: ${TOTAL_COVERAGE}%"
+          echo "========================================"
+
+          # Extract coverage by package for detailed report
+          echo "## Coverage by Package" > coverage/summary.txt
+          grep -v "total:" coverage/coverage.txt | awk '{printf "- **%s**: %s\n", $1, $3}' >> coverage/summary.txt || true
+
+          # Store coverage text for PR comment
+          {
+            echo "coverage_text<<EOF"
+            cat coverage/coverage.txt
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          # Add to step summary
           echo "## Combined Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat coverage/combined.txt >> $GITHUB_STEP_SUMMARY
+          cat coverage/coverage.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Extract coverage percentage
-        id: coverage
-        run: |
-          COVERAGE=$(grep "total:" coverage/combined.txt | awk '{print $3}' | sed 's/%//')
-          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
-          echo "Combined Coverage: $COVERAGE%"
-
-      - name: Generate coverage badge JSON
-        run: |
-          mkdir -p .github/badges
-          COVERAGE=${{ steps.coverage.outputs.percentage }}
-          COLOR="red"
-          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then COLOR="brightgreen"
-          elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then COLOR="green"
-          elif (( $(echo "$COVERAGE >= 40" | bc -l) )); then COLOR="yellow"
-          elif (( $(echo "$COVERAGE >= 20" | bc -l) )); then COLOR="orange"
-          fi
-          echo "{\"schemaVersion\":1,\"label\":\"coverage\",\"message\":\"${COVERAGE}%\",\"color\":\"${COLOR}\"}" > .github/badges/coverage.json
-          cat .github/badges/coverage.json
-
-      - name: Upload combined coverage artifact
+      - name: Upload combined coverage report
         uses: actions/upload-artifact@v5
         with:
-          name: combined-coverage
-          path: |
-            coverage/combined.out
-            coverage/combined.txt
-            .github/badges/coverage.json
-          retention-days: 30
+          name: coverage-combined
+          path: coverage/
 
-      - name: Add PR comment with coverage
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
+      - name: Create coverage badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          COVERAGE="${{ steps.merge-coverage.outputs.percentage }}"
+
+          # Determine badge color based on coverage
+          if (( $(echo "$COVERAGE >= 90" | bc -l) )); then
+            COLOR="brightgreen"
+          elif (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+            COLOR="green"
+          elif (( $(echo "$COVERAGE >= 70" | bc -l) )); then
+            COLOR="yellow"
+          elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then
+            COLOR="orange"
+          else
+            COLOR="red"
+          fi
+
+          # Create JSON for shields.io endpoint badge
+          mkdir -p .github/badges
+          cat > .github/badges/coverage.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "coverage",
+            "message": "${COVERAGE}%",
+            "color": "${COLOR}"
+          }
+          EOF
+
+          echo "Coverage badge created: ${COVERAGE}% (${COLOR})"
+
+      - name: Upload coverage badge as artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v5
         with:
-          script: |
-            const fs = require('fs');
-            const coverageText = fs.readFileSync('coverage/combined.txt', 'utf8');
-            const lines = coverageText.trim().split('\n');
-            const totalLine = lines.find(l => l.includes('total:'));
-            const percentage = totalLine ? totalLine.split(/\s+/)[2] : 'N/A';
+          name: coverage-badge
+          path: .github/badges/coverage.json
 
-            // Get per-package summary
-            const packages = {};
-            lines.forEach(line => {
-              const match = line.match(/^(.+?)\s+\S+\s+(\d+\.\d+)%$/);
-              if (match && !line.includes('total:')) {
-                const pkg = match[1].split('/').slice(-2).join('/');
-                if (!packages[pkg]) packages[pkg] = [];
-                packages[pkg].push(parseFloat(match[2]));
-              }
-            });
+      - name: Get main branch coverage
+        if: github.event_name == 'pull_request'
+        id: main-coverage
+        continue-on-error: true
+        run: |
+          # Try to fetch coverage from main branch badge
+          MAIN_COVERAGE="N/A"
+          MAIN_BADGE_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/.github/badges/coverage.json"
 
-            let packageSummary = '| Package | Coverage |\n|---------|----------|\n';
-            const pkgCoverage = {};
-            lines.forEach(line => {
-              if (line.includes('total:')) return;
-              const parts = line.trim().split(/\s+/);
-              if (parts.length >= 3) {
-                const pkg = parts[0].replace('github.com/guided-traffic/internal-secrets-operator/', '');
-                const cov = parts[parts.length - 1];
-                if (!pkgCoverage[pkg]) pkgCoverage[pkg] = cov;
-              }
-            });
+          echo "Fetching main branch coverage from: $MAIN_BADGE_URL"
 
-            // Get unique packages with their coverage
-            const uniquePkgs = [...new Set(lines.filter(l => !l.includes('total:')).map(l => {
-              const parts = l.trim().split(/\s+/);
-              return parts[0].replace('github.com/guided-traffic/internal-secrets-operator/', '');
-            }))];
+          if curl -f -s "$MAIN_BADGE_URL" -o main-coverage.json; then
+            MAIN_COVERAGE=$(jq -r '.message' main-coverage.json | sed 's/%//')
+            echo "Main branch coverage: ${MAIN_COVERAGE}%"
+          else
+            echo "Could not fetch main branch coverage badge"
+          fi
 
-            const body = `## 📊 Combined Coverage Report
+          echo "percentage=$MAIN_COVERAGE" >> $GITHUB_OUTPUT
 
-            **Total Coverage: ${percentage}**
+      - name: Calculate coverage difference
+        if: github.event_name == 'pull_request'
+        id: coverage-diff
+        run: |
+          CURRENT="${{ steps.merge-coverage.outputs.percentage }}"
+          MAIN="${{ steps.main-coverage.outputs.percentage }}"
+
+          if [ "$MAIN" = "N/A" ]; then
+            echo "diff=N/A" >> $GITHUB_OUTPUT
+            echo "emoji=ℹ️" >> $GITHUB_OUTPUT
+            echo "trend=baseline" >> $GITHUB_OUTPUT
+            echo "Cannot compare - main branch coverage not available"
+          else
+            # Use Python for floating point arithmetic (always available in GitHub Actions)
+            DIFF=$(python3 -c "print(round($CURRENT - $MAIN, 2))")
+            echo "diff=$DIFF" >> $GITHUB_OUTPUT
+
+            # Determine emoji and trend based on difference
+            # Use Python for comparison to avoid bc dependency
+            if [ "$(python3 -c "print(1 if $DIFF > 0 else 0)")" = "1" ]; then
+              echo "emoji=📈" >> $GITHUB_OUTPUT
+              echo "trend=improved" >> $GITHUB_OUTPUT
+              echo "Coverage improved by ${DIFF}%"
+            elif [ "$(python3 -c "print(1 if $DIFF < 0 else 0)")" = "1" ]; then
+              echo "emoji=📉" >> $GITHUB_OUTPUT
+              echo "trend=decreased" >> $GITHUB_OUTPUT
+              echo "Coverage decreased by ${DIFF}%"
+            else
+              echo "emoji=➡️" >> $GITHUB_OUTPUT
+              echo "trend=unchanged" >> $GITHUB_OUTPUT
+              echo "Coverage unchanged"
+            fi
+          fi
+
+      - name: Generate coverage summary for PR
+        if: github.event_name == 'pull_request'
+        id: coverage-summary
+        run: |
+          # Create a formatted summary
+          echo "COVERAGE_SUMMARY<<EOF" >> $GITHUB_ENV
+          cat coverage/summary.txt >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Comment PR with combined coverage
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage
+          message: |
+            ## 📊 Combined Test Coverage Report
+
+            **Current Coverage:** `${{ steps.merge-coverage.outputs.percentage }}%`
+            **Main Branch Coverage:** `${{ steps.main-coverage.outputs.percentage }}%`
+            **Difference:** ${{ steps.coverage-diff.outputs.emoji }} `${{ steps.coverage-diff.outputs.diff }}%`
 
             <details>
-            <summary>📁 Coverage Details</summary>
+            <summary>📁 Coverage by Package</summary>
 
-            \`\`\`
-            ${coverageText}
-            \`\`\`
+            ${{ env.COVERAGE_SUMMARY }}
 
             </details>
 
-            > Coverage is calculated from unit tests + integration tests combined.`;
+            <details>
+            <summary>📄 Full Coverage Report</summary>
 
-            // Find existing comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
+            ```
+            ${{ steps.merge-coverage.outputs.coverage_text }}
+            ```
 
-            const botComment = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Combined Coverage Report')
-            );
+            </details>
 
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: body
-              });
-            }
+            > Coverage is calculated from unit tests + integration tests combined.
 
   container-malware-scan:
     name: Container Malware Scan
@@ -560,40 +634,25 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.BOT_PAT }}
 
+      - name: Download coverage badge
+        uses: actions/download-artifact@v6
+        with:
+          name: coverage-badge
+          path: .github/badges/
+        continue-on-error: true
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "lts/*"
 
-      - name: Semantic Release
+      - name: Install dependencies
+        run: npm install
+
+      - name: Verify the integrity of provenance attestations and registry signatures for installed dependencies
+        run: npm audit signatures
+
+      - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
         run: npx semantic-release
-
-      - name: Download coverage badge
-        uses: actions/download-artifact@v6
-        with:
-          name: combined-coverage
-          path: coverage-artifacts/
-
-      - name: Update coverage badge on main
-        run: |
-          # Configure git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Ensure .github/badges directory exists
-          mkdir -p .github/badges
-
-          # Copy badge JSON
-          cp coverage-artifacts/.github/badges/coverage.json .github/badges/coverage.json
-
-          # Check if there are changes
-          if git diff --quiet .github/badges/coverage.json 2>/dev/null; then
-            echo "No coverage badge changes to commit"
-          else
-            git add .github/badges/coverage.json
-            git commit -m "chore: update coverage badge [skip ci]"
-            git push
-            echo "Coverage badge updated successfully"
-          fi
