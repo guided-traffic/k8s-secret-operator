@@ -1,4 +1,4 @@
-🔐 Kubernetes Secret Operator has been installed!
+🔐 Internal Secrets Operator has been installed!
 
 The controller is now watching for Secrets with the annotation:
   secgen.gtrfc.com/autogenerate
@@ -23,11 +23,11 @@ The controller will automatically generate values for 'password' and 'api-key' f
 
 Check controller status:
 ------------------------
-  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-secret-operator.name" . }}
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "internal-secrets-operator.name" . }}
 
 View controller logs:
 ---------------------
-  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "k8s-secret-operator.name" . }}
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "internal-secrets-operator.name" . }}
 
 {{- if .Values.serviceMonitor.enabled }}
 

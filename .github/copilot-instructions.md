@@ -1,10 +1,10 @@
-# Kubernetes Secret Operator
+# Internal Secrets Operator
 
 ## Project Overview
 
 This project implements a custom Kubernetes controller that automatically generates random secret values. It can be used for auto-generating random credentials for applications running on Kubernetes.
 
-**Repository:** https://github.com/guided-traffic/k8s-secret-operator
+**Repository:** https://github.com/guided-traffic/internal-secrets-operator
 
 **Note:** This project is in early development and has no releases yet. All changes are considered breaking changes, but since there are no users yet, backwards compatibility is not required at this stage.
 
@@ -213,7 +213,7 @@ config:
 ## File Structure
 
 ```
-k8s-secret-operator/
+internal-secrets-operator/
 ├── .github/
 │   ├── copilot-instructions.md
 │   └── workflows/
@@ -234,7 +234,7 @@ k8s-secret-operator/
 │   └── samples/
 ├── deploy/
 │   └── helm/
-│       └── k8s-secret-operator/
+│       └── internal-secrets-operator/
 ├── test/
 │   └── e2e/
 ├── Containerfile
