@@ -683,9 +683,9 @@ func TestSecretRotationFieldSpecific(t *testing.T) {
 			Name:      "test-rotation-field-specific",
 			Namespace: testNamespace,
 			Annotations: map[string]string{
-				AnnotationAutogenerate:            "password,api-key",
-				AnnotationType:                    "string",
-				AnnotationLength:                  "24",
+				AnnotationAutogenerate:              "password,api-key",
+				AnnotationType:                      "string",
+				AnnotationLength:                    "24",
 				AnnotationRotatePrefix + "password": "10s",
 				// api-key has no rotation annotation, so it should not be rotated
 			},

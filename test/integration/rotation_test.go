@@ -297,11 +297,11 @@ func TestRotationWithMockedTime(t *testing.T) {
 				Name:      "test-field-specific-due",
 				Namespace: ns.Name,
 				Annotations: map[string]string{
-					AnnotationAutogenerate:                "password,api-key",
-					AnnotationRotate:                      "24h", // default: 24h
-					AnnotationRotatePrefix + "password":   "2h",  // password: 2h (should rotate)
-					AnnotationRotatePrefix + "api-key":    "12h", // api-key: 12h (should NOT rotate)
-					AnnotationGeneratedAt:                 oldTime.Format(time.RFC3339),
+					AnnotationAutogenerate:              "password,api-key",
+					AnnotationRotate:                    "24h", // default: 24h
+					AnnotationRotatePrefix + "password": "2h",  // password: 2h (should rotate)
+					AnnotationRotatePrefix + "api-key":  "12h", // api-key: 12h (should NOT rotate)
+					AnnotationGeneratedAt:               oldTime.Format(time.RFC3339),
 				},
 			},
 			Type: corev1.SecretTypeOpaque,
@@ -476,11 +476,11 @@ func TestRotationMultipleFields(t *testing.T) {
 				Name:      "test-multi-rotation",
 				Namespace: ns.Name,
 				Annotations: map[string]string{
-					AnnotationAutogenerate:                     "password,api-key,encryption-key",
-					AnnotationRotate:                           "24h",
-					AnnotationRotatePrefix + "password":        "1h",
-					AnnotationRotatePrefix + "api-key":         "7d",
-					AnnotationRotatePrefix + "encryption-key":  "30d",
+					AnnotationAutogenerate:                    "password,api-key,encryption-key",
+					AnnotationRotate:                          "24h",
+					AnnotationRotatePrefix + "password":       "1h",
+					AnnotationRotatePrefix + "api-key":        "7d",
+					AnnotationRotatePrefix + "encryption-key": "30d",
 				},
 			},
 			Type: corev1.SecretTypeOpaque,

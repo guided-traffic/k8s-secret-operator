@@ -1079,10 +1079,10 @@ func TestReconcileWithFieldSpecificRotation(t *testing.T) {
 			Name:      "test-secret",
 			Namespace: "default",
 			Annotations: map[string]string{
-				AnnotationAutogenerate:                  "password,api-key",
-				AnnotationRotate:                        "24h",
-				AnnotationRotatePrefix + "password":     "1h",
-				AnnotationGeneratedAt:                   oldTime.Format(time.RFC3339),
+				AnnotationAutogenerate:              "password,api-key",
+				AnnotationRotate:                    "24h",
+				AnnotationRotatePrefix + "password": "1h",
+				AnnotationGeneratedAt:               oldTime.Format(time.RFC3339),
 			},
 		},
 		Data: map[string][]byte{
