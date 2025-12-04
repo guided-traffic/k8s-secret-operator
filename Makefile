@@ -257,9 +257,8 @@ ENVTEST_VERSION ?= release-0.17
 GOLANGCI_LINT_VERSION ?= v1.55.2
 GOCYCLO_VERSION ?= v0.6.0
 
-# Cyclomatic complexity threshold (recommended: 10-15, currently 35 due to Reconcile function)
-# TODO: Refactor SecretReconciler.Reconcile (complexity: 31) to reduce below 15
-CYCLO_THRESHOLD ?= 35
+# Cyclomatic complexity threshold (recommended: 10-15)
+CYCLO_THRESHOLD ?= 15
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
