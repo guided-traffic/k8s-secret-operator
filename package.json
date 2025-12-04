@@ -1,0 +1,20 @@
+{
+  "name": "internal-secrets-operator",
+  "version": "0.0.0-development",
+  "description": "A Kubernetes operator that automatically generates random secret values",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guided-traffic/internal-secrets-operator.git"
+  },
+  "author": "Guided Traffic",
+  "license": "Apache-2.0",
+  "private": true,
+  "devDependencies": {
+    "@semantic-release/commit-analyzer": "^14.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.1",
+    "@semantic-release/release-notes-generator": "^14.0.1",
+    "conventional-changelog-conventionalcommits": "^9.0.0",
+    "semantic-release": "^24.2.0"
+  }
+}
