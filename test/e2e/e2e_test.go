@@ -771,7 +771,7 @@ func TestSecretRotationMinIntervalValidation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a secret with rotation interval below minInterval (5s configured in helm-values.yaml)
-	// This should trigger a warning event
+	// This should trigger a warning event but still generate the initial password
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-rotation-min-interval",
@@ -792,8 +792,24 @@ func TestSecretRotationMinIntervalValidation(t *testing.T) {
 		t.Fatalf("Failed to create secret: %v", err)
 	}
 
-	// Wait for the operator to process the secret and create a warning event
-	time.Sleep(5 * time.Second)
+	// Wait for the operator to process the secret and generate the password
+	// Even with invalid rotation interval, initial generation should still work
+	var updatedSecret *corev1.Secret
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
+		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-rotation-min-interval", metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		// Check if password field was generated
+		if _, ok := s.Data["password"]; ok {
+			updatedSecret = s
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Failed waiting for password to be generated: %v", err)
+	}
 
 	// Check for warning events on the secret
 	events, err := clientset.CoreV1().Events(testNamespace).List(ctx, metav1.ListOptions{
@@ -806,7 +822,7 @@ func TestSecretRotationMinIntervalValidation(t *testing.T) {
 	// Look for a warning event about rotation interval
 	var foundWarning bool
 	for _, event := range events.Items {
-		if event.Type == "Warning" {
+		if event.Type == "Warning" && event.Reason == "RotationFailed" {
 			t.Logf("Found warning event: %s - %s", event.Reason, event.Message)
 			foundWarning = true
 		}
@@ -816,15 +832,11 @@ func TestSecretRotationMinIntervalValidation(t *testing.T) {
 		t.Log("Note: Warning event not found. The operator may have used minInterval instead of rejecting the value.")
 	}
 
-	// Verify the secret was still processed (password should be generated)
-	s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, "test-rotation-min-interval", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("Failed to get secret: %v", err)
+	// Verify password length
+	password := string(updatedSecret.Data["password"])
+	if len(password) != 32 {
+		t.Errorf("Expected password length 32, got %d", len(password))
 	}
 
-	if _, ok := s.Data["password"]; !ok {
-		t.Error("Expected password to be generated despite invalid rotation interval")
-	}
-
-	t.Log("Min interval validation test completed")
+	t.Log("Min interval validation test completed - password was generated despite invalid rotation interval")
 }

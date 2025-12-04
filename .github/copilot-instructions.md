@@ -221,6 +221,10 @@ config:
 3. Mock external dependencies
 4. Use envtest for controller tests
 
+### Git Workflow
+
+**Important:** Copilot never commits to Git autonomously. All Git commits are performed exclusively by the developer.
+
 ## File Structure
 
 ```

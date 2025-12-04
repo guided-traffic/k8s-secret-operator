@@ -1139,3 +1139,78 @@ func TestReconcileWithFieldSpecificRotation(t *testing.T) {
 		t.Error("expected RequeueAfter to be set")
 	}
 }
+
+func TestReconcileInitialGenerationWithBelowMinInterval(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	// Create a NEW secret (no existing data) with rotation interval below minInterval
+	// This tests that initial generation still works even if rotation config is invalid
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-secret",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationAutogenerate: "password",
+				AnnotationRotate:       "1s", // Below minInterval of 5s (like E2E test)
+			},
+		},
+		// No Data field - simulates a new secret
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret).
+		Build()
+
+	gen := generator.NewSecretGenerator()
+	fakeRecorder := record.NewFakeRecorder(10)
+
+	// Use config with 5s minInterval (like E2E test)
+	cfg := config.NewDefaultConfig()
+	cfg.Rotation.MinInterval = config.Duration(5 * time.Second)
+
+	reconciler := &SecretReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Generator:     gen,
+		Config:        cfg,
+		EventRecorder: fakeRecorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Name:      secret.Name,
+			Namespace: secret.Namespace,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Fetch the secret - should be updated with generated password
+	var updatedSecret corev1.Secret
+	err = fakeClient.Get(context.Background(), req.NamespacedName, &updatedSecret)
+	if err != nil {
+		t.Fatalf("failed to get secret: %v", err)
+	}
+
+	// Verify the password WAS generated (initial generation should work despite invalid rotation)
+	if _, ok := updatedSecret.Data["password"]; !ok {
+		t.Error("expected password to be generated despite invalid rotation interval")
+	}
+
+	// Check for warning event about invalid rotation interval
+	select {
+	case event := <-fakeRecorder.Events:
+		expectedPrefix := fmt.Sprintf("%s %s", corev1.EventTypeWarning, EventReasonRotationFailed)
+		if len(event) < len(expectedPrefix) || event[:len(expectedPrefix)] != expectedPrefix {
+			t.Errorf("expected event to start with %q, got %q", expectedPrefix, event)
+		}
+	default:
+		t.Error("expected a warning event about rotation interval")
+	}
+}

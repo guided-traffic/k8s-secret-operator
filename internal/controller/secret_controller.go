@@ -252,10 +252,10 @@ func (r *SecretReconciler) getGeneratedAtTime(annotations map[string]string) *ti
 
 // secretUpdateResult contains the result of updating a secret
 type secretUpdateResult struct {
-	changed   bool
-	rotated   bool
-	err       error
-	skipRest  bool
+	changed  bool
+	rotated  bool
+	err      error
+	skipRest bool
 }
 
 // processSecretFields processes all fields that need generation or rotation.
@@ -407,19 +407,27 @@ func (r *SecretReconciler) generateFieldValue(
 ) fieldGenerationResult {
 	result := fieldGenerationResult{field: field}
 
+	// Check if field already has a value
+	_, fieldExists := secret.Data[field]
+
 	// Check rotation status
 	rotationCheck := r.checkFieldRotation(secret.Annotations, field, generatedAt)
 
 	// Handle rotation validation error
+	// Note: We still allow initial generation even if rotation interval is invalid
 	if rotationCheck.err != nil {
 		logger.Error(nil, rotationCheck.errMsg, "field", field)
 		r.EventRecorder.Event(secret, corev1.EventTypeWarning, EventReasonRotationFailed, rotationCheck.errMsg)
-		// Skip this field but continue processing others
-		return result
+		// If field exists, skip it (invalid rotation config prevents rotation)
+		// If field doesn't exist, we still generate the initial value
+		if fieldExists {
+			return result
+		}
+		// Continue to generate initial value, but rotation won't work
 	}
 
 	// Skip if field already has a value and doesn't need rotation
-	if _, exists := secret.Data[field]; exists && !rotationCheck.needsRotation {
+	if fieldExists && !rotationCheck.needsRotation {
 		logger.V(1).Info("Field already has value, skipping", "field", field)
 		return result
 	}
