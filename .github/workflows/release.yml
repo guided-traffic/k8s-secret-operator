@@ -1,0 +1,570 @@
+name: Test and Release
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write  # For PR comments
+  issues: write         # For issue comments
+
+env:
+  GO_VERSION: '1.25.5'
+
+jobs:
+  malware-scan:
+    name: Malware Scan (Source Code)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav clamav-daemon
+
+      - name: Update ClamAV database
+        run: |
+          sudo systemctl stop clamav-freshclam || true
+          sudo freshclam
+
+      - name: Run ClamAV scan on source code
+        run: |
+          echo "🔍 Scanning source code for malware..."
+          clamscan --recursive --infected --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=vendor . | tee clamav-report.txt
+
+          # Check if any infected files were found
+          if grep -q "Infected files: 0" clamav-report.txt; then
+            echo "✅ No malware detected in source code"
+          else
+            echo "❌ MALWARE DETECTED! Blocking release."
+            cat clamav-report.txt
+            exit 1
+          fi
+
+      - name: Upload ClamAV report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: clamav-report
+          path: clamav-report.txt
+          retention-days: 30
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run unit tests with coverage
+        run: make test-unit-coverage
+
+      - name: Upload unit coverage artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: unit-coverage
+          path: coverage/unit.out
+          retention-days: 7
+
+  gosec:
+    name: GoSec Security Scan
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run GoSec security scan
+        run: make gosec
+
+  govulncheck:
+    name: Vulnerability Check
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run vulnerability check
+        run: make vuln
+
+  linter:
+    name: Code Linting
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run linting
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          make lint
+
+  integration-tests:
+    name: Integration Tests (envtest)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Run integration tests with coverage
+        run: make test-integration-coverage
+
+      - name: Upload integration coverage artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: integration-coverage
+          path: coverage/integration.out
+          retention-days: 7
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: guidedtraffic
+          password: ${{ secrets.DOCKERHUB_PAT }}
+
+      - name: Create Kind config for DinD
+        run: |
+          cat << EOF > kind-config.yaml
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          name: secret-operator-test
+          nodes:
+          - role: control-plane
+          # Use native snapshotter to avoid nested overlay issues in DinD
+          containerdConfigPatches:
+          - |-
+            [plugins."io.containerd.grpc.v1.cri".containerd]
+              snapshotter = "native"
+              disable_snapshot_annotations = false
+          EOF
+
+      - name: Create Kind cluster
+        id: kind-cluster
+        continue-on-error: true
+        uses: helm/kind-action@v1.13.0
+        with:
+          version: v0.30.0
+          node_image: kindest/node:v1.33.4
+          cluster_name: secret-operator-test
+          wait: 120s
+          ignore_failed_clean: true
+          config: kind-config.yaml
+
+      - name: Verify Kind cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Build and load operator image
+        run: |
+          make docker-build IMG=k8s-secret-operator:test
+          # Import image - containerd will automatically use the native snapshotter from config
+          # Don't specify --snapshotter flag to avoid platform unpacking issues
+          docker save k8s-secret-operator:test | docker exec -i secret-operator-test-control-plane ctr --namespace=k8s.io images import -
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.3'
+
+      - name: Install operator via Helm
+        run: |
+          helm install k8s-secret-operator deploy/helm/k8s-secret-operator \
+            --namespace k8s-secret-operator-system \
+            --create-namespace \
+            --values test/e2e/helm-values.yaml \
+            --set image.repository=k8s-secret-operator \
+            --set image.tag=test \
+            --wait \
+            --timeout 120s
+
+      - name: Wait for operator
+        run: kubectl -n k8s-secret-operator-system wait --for=condition=available --timeout=120s deployment/k8s-secret-operator
+
+      - name: Run E2E tests
+        run: make test-e2e
+        env:
+          E2E_TESTS: "true"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "=== Operator logs ==="
+          kubectl -n k8s-secret-operator-system logs -l app.kubernetes.io/name=k8s-secret-operator --tail=100 || true
+          echo "=== Describe pods ==="
+          kubectl -n k8s-secret-operator-system describe pods || true
+          echo "=== Events ==="
+          kubectl -n k8s-secret-operator-system get events --sort-by='.lastTimestamp' || true
+
+      - name: Cleanup Kind cluster
+        if: always()
+        run: kind delete cluster --name secret-operator-test || true
+
+  coverage-report:
+    name: Combined Coverage Report
+    runs-on: self-hosted
+    needs: [unit-tests, integration-tests]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Download unit coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: unit-coverage
+          path: coverage/
+
+      - name: Download integration coverage
+        uses: actions/download-artifact@v5
+        with:
+          name: integration-coverage
+          path: coverage/
+
+      - name: Install gocovmerge
+        run: go install github.com/wadey/gocovmerge@latest
+
+      - name: Merge coverage profiles
+        run: |
+          mkdir -p coverage
+          gocovmerge coverage/unit.out coverage/integration.out > coverage/combined.out
+          go tool cover -func=coverage/combined.out > coverage/combined.txt
+          echo "## Combined Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat coverage/combined.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          COVERAGE=$(grep "total:" coverage/combined.txt | awk '{print $3}' | sed 's/%//')
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Combined Coverage: $COVERAGE%"
+
+      - name: Generate coverage badge JSON
+        run: |
+          mkdir -p .github/badges
+          COVERAGE=${{ steps.coverage.outputs.percentage }}
+          COLOR="red"
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then COLOR="brightgreen"
+          elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then COLOR="green"
+          elif (( $(echo "$COVERAGE >= 40" | bc -l) )); then COLOR="yellow"
+          elif (( $(echo "$COVERAGE >= 20" | bc -l) )); then COLOR="orange"
+          fi
+          echo "{\"schemaVersion\":1,\"label\":\"coverage\",\"message\":\"${COVERAGE}%\",\"color\":\"${COLOR}\"}" > .github/badges/coverage.json
+          cat .github/badges/coverage.json
+
+      - name: Upload combined coverage artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: combined-coverage
+          path: |
+            coverage/combined.out
+            coverage/combined.txt
+            .github/badges/coverage.json
+          retention-days: 30
+
+      - name: Add PR comment with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const coverageText = fs.readFileSync('coverage/combined.txt', 'utf8');
+            const lines = coverageText.trim().split('\n');
+            const totalLine = lines.find(l => l.includes('total:'));
+            const percentage = totalLine ? totalLine.split(/\s+/)[2] : 'N/A';
+
+            // Get per-package summary
+            const packages = {};
+            lines.forEach(line => {
+              const match = line.match(/^(.+?)\s+\S+\s+(\d+\.\d+)%$/);
+              if (match && !line.includes('total:')) {
+                const pkg = match[1].split('/').slice(-2).join('/');
+                if (!packages[pkg]) packages[pkg] = [];
+                packages[pkg].push(parseFloat(match[2]));
+              }
+            });
+
+            let packageSummary = '| Package | Coverage |\n|---------|----------|\n';
+            const pkgCoverage = {};
+            lines.forEach(line => {
+              if (line.includes('total:')) return;
+              const parts = line.trim().split(/\s+/);
+              if (parts.length >= 3) {
+                const pkg = parts[0].replace('github.com/guided-traffic/k8s-secret-operator/', '');
+                const cov = parts[parts.length - 1];
+                if (!pkgCoverage[pkg]) pkgCoverage[pkg] = cov;
+              }
+            });
+
+            // Get unique packages with their coverage
+            const uniquePkgs = [...new Set(lines.filter(l => !l.includes('total:')).map(l => {
+              const parts = l.trim().split(/\s+/);
+              return parts[0].replace('github.com/guided-traffic/k8s-secret-operator/', '');
+            }))];
+
+            const body = `## 📊 Combined Coverage Report
+
+            **Total Coverage: ${percentage}**
+
+            <details>
+            <summary>📁 Coverage Details</summary>
+
+            \`\`\`
+            ${coverageText}
+            \`\`\`
+
+            </details>
+
+            > Coverage is calculated from unit tests + integration tests combined.`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Combined Coverage Report')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+  container-malware-scan:
+    name: Container Malware Scan
+    runs-on: self-hosted
+    needs: [malware-scan]  # Run after source scan passes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Get current epoch time
+        id: time
+        run: echo "epoch=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Build container for scanning
+        uses: docker/build-push-action@v6
+        with:
+          file: Containerfile
+          context: .
+          build-args: |
+            BUILD_NUMBER=scan-${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.time.outputs.epoch }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: k8s-secret-operator:scan-${{ github.sha }}
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: k8s-secret-operator:scan-${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          scanners: 'vuln,secret,misconfig'
+
+      - name: Run Trivy scan (SARIF output)
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: k8s-secret-operator:scan-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          scanners: 'vuln,secret,misconfig'
+
+      - name: Upload Trivy scan results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: trivy-container-report
+          path: trivy-results.sarif
+          retention-days: 30
+
+      - name: Cleanup scan image
+        if: always()
+        run: docker rmi k8s-secret-operator:scan-${{ github.sha }} || true
+
+  semantic-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [malware-scan, container-malware-scan, gosec, govulncheck, linter, unit-tests, integration-tests, e2e-tests, coverage-report]
+    name: Semantic Release
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.USER_PAT }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
+
+      - name: Install dependencies
+        run: npm clean-install
+
+      - name: Verify the integrity of provenance attestations and registry signatures for installed dependencies
+        run: npm audit signatures
+
+      - name: Semantic Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.USER_PAT }}
+        run: npx semantic-release
+
+      - name: Download coverage badge
+        uses: actions/download-artifact@v5
+        with:
+          name: combined-coverage
+          path: coverage-artifacts/
+
+      - name: Update coverage badge on main
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Ensure .github/badges directory exists
+          mkdir -p .github/badges
+
+          # Copy badge JSON
+          cp coverage-artifacts/.github/badges/coverage.json .github/badges/coverage.json
+
+          # Check if there are changes
+          if git diff --quiet .github/badges/coverage.json 2>/dev/null; then
+            echo "No coverage badge changes to commit"
+          else
+            git add .github/badges/coverage.json
+            git commit -m "chore: update coverage badge [skip ci]"
+            git push
+            echo "Coverage badge updated successfully"
+          fi

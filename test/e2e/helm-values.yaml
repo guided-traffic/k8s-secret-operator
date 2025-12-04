@@ -1,0 +1,26 @@
+# Used when installing the operator in Kind cluster
+#
+# For CI pipeline, override image with:
+#   --set image.repository=k8s-secret-operator --set image.tag=test
+
+image:
+  repository: ghcr.io/guided-traffic/k8s-secret-operator
+  pullPolicy: Never  # Image is loaded directly into Kind
+  tag: "latest"
+
+controller:
+  leaderElection: false  # Single replica, no need for leader election
+
+# Faster health probes for quicker test feedback
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  initialDelaySeconds: 3
+  periodSeconds: 5
+
+# Reduced CPU limit for testing
+resources:
+  limits:
+    cpu: 200m

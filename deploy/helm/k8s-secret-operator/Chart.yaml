@@ -1,0 +1,17 @@
+apiVersion: v2
+name: k8s-secret-operator
+description: A Kubernetes controller that automatically generates random secret values
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - secrets
+  - operator
+  - controller
+home: https://github.com/guided-traffic/k8s-secret-operator
+sources:
+  - https://github.com/guided-traffic/k8s-secret-operator
+maintainers:
+  - name: guided-traffic
+    url: https://github.com/guided-traffic
