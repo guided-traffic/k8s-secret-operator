@@ -7,8 +7,6 @@
     ":semanticCommitTypeAll(chore)"
   ],
   "labels": ["dependencies"],
-  "timezone": "Europe/Berlin",
-  "schedule": ["before 6am on monday"],
   "platformAutomerge": true,
   "automergeType": "pr",
   "automergeStrategy": "squash",
