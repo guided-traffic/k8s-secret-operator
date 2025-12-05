@@ -561,3 +561,118 @@ A Secret with the `replicate-to` annotation will push its data to specified name
 - ✅ Alerts user when replication fails due to conflict
 
 ## TODO
+
+### Secret Replication Implementation
+
+#### Phase 1: Configuration & Infrastructure
+- [ ] Add feature toggles to config schema (`secret-generator: true`, `secret-replicator: true`)
+- [ ] Update `pkg/config/config.go` to parse new feature toggle options
+- [ ] Update `pkg/config/config_test.go` with tests for feature toggles
+- [ ] Update Helm chart `values.yaml` with feature toggle options
+- [ ] Update Helm chart `templates/configmap.yaml` to include feature toggles
+- [ ] Update RBAC in `config/rbac/role.yaml` to add `create` and `delete` verbs for secrets
+- [ ] Update Helm chart `templates/rbac.yaml` with extended permissions
+
+#### Phase 2: Core Replication Logic
+- [ ] Create `pkg/replicator/` package structure
+- [ ] Implement `pkg/replicator/replicator.go` with core replication functions:
+  - [ ] `ReplicateSecret(ctx, source, target)` - Copy data from source to target
+  - [ ] `ValidateReplication(source, target)` - Check mutual consent (annotations match)
+  - [ ] `ShouldReplicate(sourceNS, targetAllowlist)` - Glob pattern matching
+  - [ ] `AddReplicationAnnotations(secret, sourceRef)` - Add `replicated-from` annotation
+- [ ] Implement glob pattern matching utility for namespace patterns
+- [ ] Create comprehensive unit tests in `pkg/replicator/replicator_test.go`
+  - [ ] Test glob patterns: `*`, `?`, `[abc]`, `[a-z]`, `[0-9]`
+  - [ ] Test exact matches and comma-separated lists
+  - [ ] Test mutual consent validation
+  - [ ] Test data copying logic
+
+#### Phase 3: Pull-based Replication Controller
+- [ ] Create `internal/controller/secret_replicator_controller.go`
+- [ ] Implement controller setup with feature toggle check
+- [ ] Implement `Reconcile()` function for pull-based replication:
+  - [ ] Check if Secret has `replicate-from` annotation
+  - [ ] Parse source namespace/name from annotation
+  - [ ] Fetch source Secret
+  - [ ] Validate source has `replicatable-from-namespaces` annotation
+  - [ ] Validate namespace matches glob pattern (mutual consent)
+  - [ ] Check for conflicting `autogenerate` annotation (Q16)
+  - [ ] Copy data from source to target (overwrite existing - Q4)
+  - [ ] Add `replicated-from` status annotation (Q15)
+  - [ ] Optional: Add `last-replicated-at` timestamp
+  - [ ] Handle errors with Warning Events
+- [ ] Implement watch on source Secrets for automatic sync (Q5)
+  - [ ] Build reverse mapping: source -> targets
+  - [ ] Trigger target reconciliation when source changes
+- [ ] Handle source Secret deletion (Q6)
+  - [ ] Keep data in target (snapshot behavior)
+  - [ ] Create Warning Event on target
+- [ ] Create unit tests in `internal/controller/secret_replicator_controller_test.go`
+
+#### Phase 4: Push-based Replication
+- [ ] Extend `Reconcile()` function for push-based replication:
+  - [ ] Check if Secret has `replicate-to` annotation
+  - [ ] Parse comma-separated list of target namespaces
+  - [ ] For each target namespace:
+    - [ ] Check if target Secret exists
+    - [ ] If exists: Check for `replicated-from` annotation (Q18)
+      - [ ] If owned by us: Update
+      - [ ] If not owned: Skip and create Warning Event
+    - [ ] If not exists: Create new Secret
+    - [ ] Add `replicated-from` annotation to target
+    - [ ] Copy all data from source
+- [ ] Implement Finalizer for cross-namespace cleanup (Q11)
+  - [ ] Add finalizer `iso.gtrfc.com/replicate-to-cleanup` to source
+  - [ ] On deletion: Query all Secrets with `replicated-from: "source-ns/source-name"`
+  - [ ] Delete all pushed Secrets
+  - [ ] Remove finalizer from source
+- [ ] Implement automatic sync for pushed Secrets (Q10)
+  - [ ] Watch source Secrets with `replicate-to`
+  - [ ] Update all pushed targets when source changes
+- [ ] Add unit tests for push-based replication
+
+#### Phase 5: Integration & Validation
+- [ ] Wire up `SecretReplicatorController` in `cmd/main.go`
+  - [ ] Check feature toggle before starting controller
+  - [ ] Set up controller manager with proper watches
+- [ ] Create integration tests in `test/integration/replication_test.go`:
+  - [ ] Test pull-based replication with mutual consent
+  - [ ] Test glob pattern matching for namespaces
+  - [ ] Test automatic sync when source changes
+  - [ ] Test source deletion behavior (snapshot)
+  - [ ] Test push-based replication to multiple namespaces
+  - [ ] Test push target already exists (owned vs not owned)
+  - [ ] Test finalizer cleanup on source deletion
+  - [ ] Test conflict detection (`autogenerate` + `replicate-from`)
+  - [ ] Test allowed combination (`autogenerate` + `replicatable-from-namespaces`)
+  - [ ] Test RBAC permission requirements
+- [ ] Create end-to-end tests in `test/e2e/replication_e2e_test.go`:
+  - [ ] Deploy operator with feature toggles
+  - [ ] Test cross-namespace pull replication
+  - [ ] Test cross-namespace push replication
+  - [ ] Test feature toggle disable/enable
+
+#### Phase 6: Documentation & Examples
+- [ ] Create example manifests in `config/samples/`:
+  - [ ] `secret_pull_replication.yaml` - Pull-based example
+  - [ ] `secret_push_replication.yaml` - Push-based example
+  - [ ] `secret_combined_generate_replicate.yaml` - Generator + replicatable
+- [ ] Update `README.md` with:
+  - [ ] Secret Replication feature overview
+  - [ ] Annotation reference
+  - [ ] Pull-based vs Push-based comparison
+  - [ ] Mutual consent security model explanation
+  - [ ] Examples and use cases
+  - [ ] RBAC requirements
+- [ ] Update Helm chart `README.md` with replication configuration
+- [ ] Update Helm chart `NOTES.txt` with replication hints
+
+#### Phase 7: Cleanup & Polish
+- [ ] Run `make test` - ensure all tests pass
+- [ ] Run `make lint` - fix any linting issues
+- [ ] Check code coverage (target: 80%+)
+- [ ] Verify RBAC permissions are correct
+- [ ] Test Helm chart deployment with different configurations
+- [ ] Review error messages and Warning Events for clarity
+- [ ] Performance test with multiple namespaces and many Secrets
+- [ ] Security review of cross-namespace access patterns
