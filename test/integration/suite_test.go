@@ -89,11 +89,17 @@ func TestMain(m *testing.M) {
 	// Run tests
 	code := m.Run()
 
-	// Cleanup
-	err = testEnv.Stop()
-	if err != nil {
-		logf.Log.Error(err, "failed to stop test environment")
-	}
+	// Cleanup - use defer with panic recovery to ensure exit code is preserved
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logf.Log.Info("recovered from panic during cleanup", "panic", r)
+			}
+		}()
+		if err := testEnv.Stop(); err != nil {
+			logf.Log.Error(err, "failed to stop test environment (ignoring)")
+		}
+	}()
 
 	os.Exit(code)
 }
