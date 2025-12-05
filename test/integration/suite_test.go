@@ -61,10 +61,13 @@ func TestMain(m *testing.M) {
 		zap.StacktraceLevel(zapcore.PanicLevel),
 	))
 
-	// Set KUBEBUILDER_ASSETS to use local binaries
-	projectRoot := getProjectRoot()
-	kubebuilderAssets := filepath.Join(projectRoot, "bin", "k8s", "1.29.0-darwin-arm64")
-	os.Setenv("KUBEBUILDER_ASSETS", kubebuilderAssets)
+	// Set KUBEBUILDER_ASSETS if not already set (for local development on macOS ARM64)
+	// In CI/CD, this will already be set by the Makefile to the correct platform
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		projectRoot := getProjectRoot()
+		kubebuilderAssets := filepath.Join(projectRoot, "bin", "k8s", "1.29.0-darwin-arm64")
+		os.Setenv("KUBEBUILDER_ASSETS", kubebuilderAssets)
+	}
 
 	testEnv = &envtest.Environment{
 		ErrorIfCRDPathMissing: false,
