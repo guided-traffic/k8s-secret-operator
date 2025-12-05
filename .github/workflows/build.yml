@@ -112,7 +112,7 @@ jobs:
       - name: Docker Scout scan
         uses: docker/scout-action@v1
         with:
-          command: quickview,cves,recommendations
+          command: cves
           image: guidedtraffic/internal-secrets-operator:${{ steps.version.outputs.version }}
           sarif-file: scout-report.sarif
           summary: true
