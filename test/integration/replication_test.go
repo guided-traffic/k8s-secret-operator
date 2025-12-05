@@ -99,7 +99,12 @@ func consistentlySecretEmpty(ctx context.Context, c client.Client, key types.Nam
 	for time.Now().Before(deadline) {
 		secret := &corev1.Secret{}
 		err := c.Get(ctx, key, secret)
-		if err != nil || len(secret.Data) > 0 {
+		// Ignore NotFound errors (secret doesn't exist yet or was deleted)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return false
+		}
+		// If secret exists and has data, it's not empty
+		if err == nil && len(secret.Data) > 0 {
 			return false
 		}
 		time.Sleep(replicationInterval)
