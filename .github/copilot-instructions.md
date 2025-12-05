@@ -125,11 +125,13 @@ The controller needs the following permissions:
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["get", "list", "watch", "update", "patch"]
+  verbs: ["get", "list", "watch", "update", "patch", "create", "delete"]
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch"]
 ```
+
+**Note:** `create` and `delete` verbs are required for secret replication features.
 
 ### Defaults
 
@@ -258,9 +260,304 @@ internal-secrets-operator/
 └── README.md
 ```
 
+## Secret Replication Feature (DRAFT - IN PLANNING)
+
+### Overview
+
+The operator will support replicating Secrets across namespaces in two modes:
+- **Pull-based replication**: A Secret can pull data from Secrets in other namespaces
+- **Push-based replication**: A Secret can push its data to other namespaces
+
+### Feature Toggles
+
+Both the existing Secret Generator and the new Secret Replicator can be independently enabled/disabled via configuration:
+
+| Config Option | Description | Default |
+|---------------|-------------|---------|
+| `secret-generator` | Enable/disable automatic secret value generation | `true` |
+| `secret-replicator` | Enable/disable secret replication across namespaces | `true` |
+
+**Configuration location:** `/etc/secret-operator/config.yaml` and Helm values
+
+### Annotations for Replication
+
+All replication annotations use the `iso.gtrfc.com/` prefix:
+
+| Annotation | Description | Values |
+|------------|-------------|--------|
+| `replicatable-from-namespaces` | Allowlist of namespaces that are allowed to replicate FROM this Secret (source side) | Comma-separated list with patterns: `"namespace1,namespace[0-9]*"` or `"*"` for all |
+| `replicate-from` | Source Secret to replicate data from (target side) | Format: `"namespace/secret-name"` |
+| `replicate-to` | Push this secret to specified namespaces (push-based) | Comma-separated list: `"namespace1,namespace2"` |
+
+### Mutual Consent Security Model
+
+For **pull-based replication**, both sides must explicitly consent:
+
+1. **Source Secret** (where data comes from) must have `replicatable-from-namespaces` annotation allowing the target namespace
+2. **Target Secret** (where data will be copied to) must have `replicate-from` annotation pointing to the source
+
+**Example:**
+
+```yaml
+# Source Secret in namespace "production"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: production
+  annotations:
+    iso.gtrfc.com/replicatable-from-namespaces: "staging"
+data:
+  username: cHJvZHVzZXI=
+  password: cHJvZHBhc3M=
+---
+# Target Secret in namespace "staging"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: staging
+  annotations:
+    iso.gtrfc.com/replicate-from: "production/db-credentials"
+data: {}
+```
+
+Result: Data from `production/db-credentials` is copied to `staging/db-credentials`
+
+**Security:** This prevents unauthorized access - a Secret cannot be replicated unless it explicitly allows replication to specific namespaces.
+
+### Pull-based Replication
+
+Pull-based replication requires **mutual consent** from both source and target Secrets.
+
+**Source Secret** (provides data):
+- Has `replicatable-from-namespaces` annotation specifying allowed target namespaces
+- Supports glob patterns for flexible namespace matching
+
+**Target Secret** (receives data):
+- Has `replicate-from` annotation pointing to the source (`"namespace/secret-name"`)
+- Explicitly requests replication from that specific source
+
+**Pattern matching for `replicatable-from-namespaces` (Glob syntax):**
+- Exact namespace names: `"namespace1"`
+- Multiple namespaces: `"namespace1,namespace2"`
+- Glob patterns: `"namespace-*"`, `"prod-?"`, `"ns-[0-9]"`
+- All namespaces: `"*"`
+
+**Supported glob syntax:**
+- `*` - matches any sequence of characters
+- `?` - matches any single character
+- `[abc]` - matches any character in the set (a, b, or c)
+- `[a-z]` - matches any character in the range (a through z)
+- `[0-9]` - matches any digit
+
+**Behavior:**
+- Replication only occurs when BOTH annotations match
+- Data from source Secret is copied to target Secret
+- Existing data in target is overwritten (replicated data wins)
+- Target Secrets automatically sync when source changes
+- If source is deleted, target keeps last known data (snapshot)
+- Each target can only replicate from one source Secret
+
+### Push-based Replication
+
+A Secret with the `replicate-to` annotation will push its data to specified namespaces.
+
+**Behavior:**
+- Creates a copy of the Secret in each target namespace (comma-separated list supported)
+- If target exists and has `replicated-from` annotation: Update
+- If target exists without annotation: Skip and create Warning Event on source
+- Pushed Secrets automatically sync when source changes
+- Cross-namespace ownership via Finalizers + `replicated-from` annotation
+- When source is deleted, all pushed Secrets are automatically cleaned up
+
+### Open Questions
+
+#### Q1: Controller Structure ✅
+**Decision:** Create a separate `SecretReplicatorController`
+
+**Rationale:**
+- Better separation of concerns
+- Easier to test independently
+- Can be enabled/disabled via feature toggle without affecting secret generation
+- Clearer code organization
+
+#### Q2: Feature Toggle Configuration ✅
+**Decision:** Both in config file AND exposed via Helm values
+
+**Rationale:**
+- User-friendly for Helm installations
+- Consistent with existing config options (defaults, rotation, etc.)
+- Helm values generate the ConfigMap, keeping everything in sync
+
+#### Q3: Pattern Matching for Pull-based Replication ✅
+**Decision:** Glob patterns (e.g., `namespace-*`, `prod-?`)
+
+**Rationale:**
+- Simpler for users to understand and use
+- Familiar from shell/Kubernetes contexts
+- Sufficient flexibility for most use cases
+- Less error-prone than regex
+
+**Pattern syntax to support:**
+- `*` - matches any sequence of characters
+- `?` - matches any single character
+- `[abc]` - matches any character in the set
+- `[a-z]` - matches any character in the range
+- Exact namespace names without patterns
+
+#### Q4: Pull-based Existing Target Data ✅
+**Decision:** Overwrite with replicated data (replicated data wins)
+
+**Rationale:**
+- Clear and predictable behavior
+- Replication annotation signals intent to sync from source
+- Aligns with typical replication semantics (source is authoritative)
+
+#### Q5: Pull-based Source Secret Changes ✅
+**Decision:** Yes, automatic sync
+
+**Rationale:**
+- Target Secrets stay synchronized with their sources
+- Expected behavior for replication (source is authoritative)
+- Controller watches source Secrets and triggers reconciliation of targets when they change
+
+**Implementation note:** The controller needs to maintain a reverse mapping (source -> targets) to efficiently update all affected targets.
+
+#### Q6: Pull-based Source Secret Deletion ✅
+**Decision:** Keep the data (snapshot behavior)
+
+**Rationale:**
+- Prevents breaking applications that depend on the replicated data
+- Target Secret maintains last known state
+- User can manually delete target Secret if needed
+- Warning Event should be created to inform user that source was deleted
+
+#### Q7: Pull-based Multiple Targets ✅
+**Decision:** Yes, one source can replicate to multiple targets
+
+**Rationale:**
+- Source can specify multiple namespaces in allowlist
+- Each target that wants to pull can do so (as long as it's in the allowlist)
+- Natural fit for the allowlist pattern
+- Enables common use case: production secrets replicated to staging and dev
+
+#### Q8: Pull-based Multiple Sources ✅
+**Decision:** No, only one source Secret per target
+
+**Rationale:**
+- Simpler implementation
+- Sufficient for most use cases
+- Clear and predictable behavior
+- One `replicate-from` annotation per target Secret
+
+#### Q9: Push-based Multiple Targets ✅
+**Decision:** Yes, comma-separated list
+
+**Rationale:**
+- Practical for multi-environment deployments
+- Consistent with `replicatable-from-namespaces` syntax
+- Single annotation is cleaner than multiple annotations
+
+#### Q10: Push-based Source Updates ✅
+**Decision:** Yes, automatic sync
+
+**Rationale:**
+- Pushed Secrets stay synchronized with their source
+- Consistent with pull-based replication behavior (Q5)
+- Expected behavior for replication (source is authoritative)
+
+#### Q11: Cross-namespace Ownership ✅
+**Decision:** Use Finalizers + tracking annotations on target Secrets
+
+**Rationale:**
+- Standard Kubernetes pattern for cross-namespace cleanup
+- Source Secret has finalizer (e.g., `iso.gtrfc.com/replicate-to-cleanup`)
+- Target Secrets have annotation pointing to source (e.g., `iso.gtrfc.com/replicated-from: "production/app-secret"`)
+- On deletion: Controller finds all targets via annotation query and deletes them
+- Then removes finalizer from source
+- Robust and reliable
+
+#### Q12: RBAC Permissions ✅
+**Decision:** Extend existing RBAC with `create` and `delete` verbs for Secrets
+
+**Current permissions:**
+```yaml
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+```
+
+**Required additions for replication:**
+```yaml
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "update", "patch", "create", "delete"]
+```
+
+**Rationale:**
+- `create` needed for push-based replication (creating Secrets in target namespaces)
+- `delete` needed for cleanup when source Secret with `replicate-to` is deleted
+- Existing namespace access model (ClusterRoleBinding or manual RoleBindings) applies
+
+#### Q13: RBAC Security Model ✅
+**Decision:** No restrictions (operator can access all namespaces it has RBAC for)
+
+**Rationale:**
+- User controls access via RBAC (ClusterRoleBinding or manual RoleBindings)
+- User controls replication via `replicatable-from-namespaces` annotation (allowlist)
+- Two-layer security is sufficient: RBAC + annotation-based allowlist
+- No need for additional config-based restrictions
+
+#### Q14: Reconciliation & Watches
+**Decision:** TBD - Discussed but not yet finalized
+
+**Note:** Controller watches all Secrets. On each Secret event, it checks for replication annotations and executes replication if needed. This is the standard Kubernetes controller pattern.
+
+#### Q15: Status Tracking Annotations ✅
+**Decision:** Yes, add status annotations
+
+**Annotations to add:**
+- On target Secrets (pull & push): `iso.gtrfc.com/replicated-from: "source-namespace/secret-name"`
+- Optional: `iso.gtrfc.com/last-replicated-at: "2025-12-05T10:00:00Z"`
+
+**Rationale:**
+- User can see replication status with `kubectl describe secret`
+- Useful for debugging
+- Required for Q11 (finding pushed Secrets during finalizer cleanup)
+- Required for Q18 (identifying if we own an existing target Secret)
+- Clear provenance tracking
+
+#### Q16: Interaction with Secret Generator - Priority ✅
+**Decision:** Error - conflicting features
+
+**Rationale:**
+- `autogenerate` and `replicate-from` cannot be used together on the same Secret
+- If both annotations are present, operator creates a Warning Event
+- Secret remains unchanged
+- Clear and predictable behavior, avoids confusion
+
+#### Q17: Interaction with Secret Generator - Source with Autogenerate ✅
+**Decision:** Yes, `autogenerate` and `replicatable-from-namespaces` can be used together
+
+**Rationale:**
+- Source Secret can auto-generate values AND allow replication to other namespaces
+- Common use case: Generate secrets in production, share them with staging/dev
+- Replication happens whenever the Secret changes (including after generation)
+- Target Secrets automatically receive updated values when source generates new data
+
+#### Q18: Push Target Already Exists ✅
+**Decision:** Update if we own it, skip otherwise with Warning Event
+
+**Rationale:**
+- Check if target has annotation `iso.gtrfc.com/replicated-from: "source-namespace/secret-name"`
+- If yes: Update (we created it, enable sync as per Q10)
+- If no: Skip AND create Warning Event on source Secret ("Secret could not be replicated to namespace X")
+- ✅ Distinguishes between "our" Secret and "foreign" Secret
+- ✅ Enables automatic updates for pushed Secrets
+- ✅ Alerts user when replication fails due to conflict
+
 ## TODO
-
-### Per-Secret Charset Annotations
-
-- [X] Implement per-Secret charset annotations (`string.uppercase`, `string.lowercase`, `string.numbers`, `string.specialChars`, `string.allowedSpecialChars`) in `secret_controller.go`
-- [X] Add e2e tests for per-Secret charset annotations
