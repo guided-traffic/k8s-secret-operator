@@ -54,6 +54,13 @@ func TestNewDefaultConfig(t *testing.T) {
 	if cfg.Rotation.CreateEvents {
 		t.Error("expected rotation createEvents to be false")
 	}
+	// Test feature defaults
+	if !cfg.Features.SecretGenerator {
+		t.Error("expected features.secretGenerator to be true")
+	}
+	if !cfg.Features.SecretReplicator {
+		t.Error("expected features.secretReplicator to be true")
+	}
 }
 
 func TestLoadConfigFileNotExists(t *testing.T) {
@@ -615,5 +622,88 @@ defaults:
 	}
 	if cfg.Rotation.CreateEvents {
 		t.Error("expected default createEvents to be false")
+	}
+}
+
+func TestLoadConfigWithFeatureToggles(t *testing.T) {
+	tests := []struct {
+		name                    string
+		configContent           string
+		expectedSecretGenerator bool
+		expectedSecretReplicator bool
+	}{
+		{
+			name: "both features enabled",
+			configContent: `
+features:
+  secretGenerator: true
+  secretReplicator: true
+`,
+			expectedSecretGenerator: true,
+			expectedSecretReplicator: true,
+		},
+		{
+			name: "generator disabled, replicator enabled",
+			configContent: `
+features:
+  secretGenerator: false
+  secretReplicator: true
+`,
+			expectedSecretGenerator: false,
+			expectedSecretReplicator: true,
+		},
+		{
+			name: "generator enabled, replicator disabled",
+			configContent: `
+features:
+  secretGenerator: true
+  secretReplicator: false
+`,
+			expectedSecretGenerator: true,
+			expectedSecretReplicator: false,
+		},
+		{
+			name: "both features disabled",
+			configContent: `
+features:
+  secretGenerator: false
+  secretReplicator: false
+`,
+			expectedSecretGenerator: false,
+			expectedSecretReplicator: false,
+		},
+		{
+			name: "features section omitted - should use defaults",
+			configContent: `
+defaults:
+  type: string
+  length: 32
+`,
+			expectedSecretGenerator: true,
+			expectedSecretReplicator: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.yaml")
+
+			if err := os.WriteFile(configPath, []byte(tt.configContent), 0644); err != nil {
+				t.Fatalf("failed to write config file: %v", err)
+			}
+
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if cfg.Features.SecretGenerator != tt.expectedSecretGenerator {
+				t.Errorf("expected secretGenerator %v, got %v", tt.expectedSecretGenerator, cfg.Features.SecretGenerator)
+			}
+			if cfg.Features.SecretReplicator != tt.expectedSecretReplicator {
+				t.Errorf("expected secretReplicator %v, got %v", tt.expectedSecretReplicator, cfg.Features.SecretReplicator)
+			}
+		})
 	}
 }

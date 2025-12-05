@@ -46,6 +46,13 @@ const (
 type Config struct {
 	Defaults DefaultsConfig `yaml:"defaults"`
 	Rotation RotationConfig `yaml:"rotation"`
+	Features FeaturesConfig `yaml:"features"`
+}
+
+// FeaturesConfig holds feature toggle configuration
+type FeaturesConfig struct {
+	SecretGenerator  bool `yaml:"secretGenerator"`
+	SecretReplicator bool `yaml:"secretReplicator"`
 }
 
 // DefaultsConfig holds the default values for secret generation
@@ -137,6 +144,10 @@ func NewDefaultConfig() *Config {
 		Rotation: RotationConfig{
 			MinInterval:  Duration(DefaultRotationMinInterval),
 			CreateEvents: false,
+		},
+		Features: FeaturesConfig{
+			SecretGenerator:  true,
+			SecretReplicator: true,
 		},
 	}
 }
