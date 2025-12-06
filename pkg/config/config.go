@@ -32,6 +32,9 @@ const (
 	// DefaultType is the default generation type
 	DefaultType = "string"
 
+	// TypeBytes is the bytes generation type
+	TypeBytes = "bytes"
+
 	// DefaultLength is the default length for generated values
 	DefaultLength = 32
 
@@ -201,7 +204,7 @@ func LoadConfig(path string) (*Config, error) {
 func (c *Config) Validate() error {
 	// Validate generation type
 	switch c.Defaults.Type {
-	case "string", "bytes":
+	case DefaultType, TypeBytes:
 		// valid types
 	default:
 		return fmt.Errorf("invalid default type: %s, must be 'string' or 'bytes'", c.Defaults.Type)
