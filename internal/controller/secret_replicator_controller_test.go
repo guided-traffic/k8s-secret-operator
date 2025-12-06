@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -506,5 +507,263 @@ func TestSecretReplicatorReconciler_FindTargetsForSource(t *testing.T) {
 	}
 	if !foundDevelopment {
 		t.Error("Did not find reconcile request for development/db-credentials")
+	}
+}
+
+func TestSecretReplicatorReconciler_SourceWithoutAllowlist(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Source without replicatable-from-namespaces annotation
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-credentials",
+			Namespace: "production",
+			// No replicatable-from-namespaces annotation
+		},
+		Data: map[string][]byte{
+			"password": []byte("secret"),
+		},
+	}
+
+	targetSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-credentials",
+			Namespace: "staging",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateFrom: "production/db-credentials",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret, targetSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: targetSecret.Namespace,
+			Name:      targetSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Check that target secret was NOT updated (no data replicated)
+	updatedSecret := &corev1.Secret{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Namespace: targetSecret.Namespace,
+		Name:      targetSecret.Name,
+	}, updatedSecret)
+	if err != nil {
+		t.Fatalf("Failed to get target secret: %v", err)
+	}
+
+	// Data should still be empty (replication denied)
+	if len(updatedSecret.Data) > 0 {
+		t.Error("Expected target secret to remain empty when source has no allowlist")
+	}
+
+	// Check for warning event
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, "Warning") {
+			t.Errorf("Expected warning event, got: %s", event)
+		}
+	default:
+		t.Error("Expected a warning event for denied replication")
+	}
+}
+
+func TestSecretReplicatorReconciler_PushToMultipleNamespaces(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "shared-secret",
+			Namespace: "production",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateTo: "staging,development,qa",
+			},
+		},
+		Data: map[string][]byte{
+			"api-key": []byte("secret-key"),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: sourceSecret.Namespace,
+			Name:      sourceSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Check that secrets were created in all target namespaces
+	targetNamespaces := []string{"staging", "development", "qa"}
+	for _, ns := range targetNamespaces {
+		targetSecret := &corev1.Secret{}
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Namespace: ns,
+			Name:      sourceSecret.Name,
+		}, targetSecret)
+		if err != nil {
+			t.Errorf("Expected secret to be created in %s, got error: %v", ns, err)
+			continue
+		}
+
+		// Verify data was replicated
+		if string(targetSecret.Data["api-key"]) != "secret-key" {
+			t.Errorf("Secret in %s has wrong data", ns)
+		}
+
+		// Verify replicated-from annotation
+		expectedSource := "production/shared-secret"
+		if targetSecret.Annotations[replicator.AnnotationReplicatedFrom] != expectedSource {
+			t.Errorf("Secret in %s has wrong replicated-from annotation", ns)
+		}
+	}
+}
+
+func TestSecretReplicatorReconciler_FinalizerAddedOnPush(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "push-secret",
+			Namespace: "production",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateTo: "staging",
+			},
+		},
+		Data: map[string][]byte{
+			"key": []byte("value"),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: sourceSecret.Namespace,
+			Name:      sourceSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Verify finalizer was added to source
+	updatedSource := &corev1.Secret{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Namespace: sourceSecret.Namespace,
+		Name:      sourceSecret.Name,
+	}, updatedSource)
+	if err != nil {
+		t.Fatalf("Failed to get source secret: %v", err)
+	}
+
+	if !replicator.HasFinalizer(updatedSource) {
+		t.Error("Expected finalizer to be added to source secret for cleanup")
+	}
+}
+
+func TestSecretReplicatorReconciler_AllowAutogenerateWithReplicatableFromNamespaces(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// This combination is ALLOWED per Q17: autogenerate + replicatable-from-namespaces
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "combined-secret",
+			Namespace: "production",
+			Annotations: map[string]string{
+				"iso.gtrfc.com/autogenerate":                    "password",
+				replicator.AnnotationReplicatableFromNamespaces: "staging,development",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(secret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: secret.Namespace,
+			Name:      secret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Should NOT generate a warning event (this combination is allowed)
+	select {
+	case event := <-recorder.Events:
+		if strings.Contains(event, "ConflictingFeatures") {
+			t.Errorf("autogenerate + replicatable-from-namespaces should be allowed, but got conflict event: %s", event)
+		}
+	default:
+		// No event is good - the combination is allowed
 	}
 }

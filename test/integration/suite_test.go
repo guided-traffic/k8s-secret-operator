@@ -269,14 +269,12 @@ func setupTestManagerWithReplicator(t *testing.T, operatorConfig *config.Config)
 		EventRecorder: eventRecorder,
 	}
 
-	// Use unique controller name
+	// Use unique controller name to avoid conflicts in tests
 	counter := atomic.AddInt64(&controllerCounter, 1)
 	controllerName := "secret-replicator-" + time.Now().Format("150405") + "-" + string(rune('a'+counter%26))
 
-	err = ctrl.NewControllerManagedBy(mgr).
-		Named(controllerName).
-		For(&corev1.Secret{}).
-		Complete(replicatorReconciler)
+	// Use the proper SetupWithManagerAndName to ensure all watches are configured correctly
+	err = replicatorReconciler.SetupWithManagerAndName(mgr, controllerName)
 	if err != nil {
 		t.Fatalf("failed to setup replicator controller: %v", err)
 	}

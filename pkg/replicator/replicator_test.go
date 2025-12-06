@@ -290,8 +290,10 @@ func TestReplicateSecret(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		target *corev1.Secret
+		name                  string
+		target                *corev1.Secret
+		expectOldKeysRemoved  bool
+		expectDataOverwritten bool
 	}{
 		{
 			name: "empty target",
@@ -301,9 +303,11 @@ func TestReplicateSecret(t *testing.T) {
 					Namespace: "staging",
 				},
 			},
+			expectOldKeysRemoved:  false,
+			expectDataOverwritten: false,
 		},
 		{
-			name: "target with existing data (should overwrite)",
+			name: "target with existing data - overwrite behavior (Q4)",
 			target: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "target-secret",
@@ -314,6 +318,8 @@ func TestReplicateSecret(t *testing.T) {
 					"oldkey":   []byte("oldvalue"),
 				},
 			},
+			expectOldKeysRemoved:  false, // Note: current implementation does NOT remove old keys, it only overwrites/adds
+			expectDataOverwritten: true,
 		},
 	}
 
@@ -326,7 +332,7 @@ func TestReplicateSecret(t *testing.T) {
 				t.Errorf("target data length = %d, want at least %d", len(tt.target.Data), len(source.Data))
 			}
 
-			// Check all source keys exist in target
+			// Check all source keys exist in target with correct values (overwrite behavior Q4)
 			for key, value := range source.Data {
 				targetValue, exists := tt.target.Data[key]
 				if !exists {
@@ -334,7 +340,15 @@ func TestReplicateSecret(t *testing.T) {
 					continue
 				}
 				if string(targetValue) != string(value) {
-					t.Errorf("target[%q] = %q, want %q", key, targetValue, value)
+					t.Errorf("target[%q] = %q, want %q (data should be overwritten)", key, targetValue, value)
+				}
+			}
+
+			// Verify overwrite happened for existing keys
+			if tt.expectDataOverwritten {
+				if string(tt.target.Data["username"]) != "produser" {
+					t.Errorf("existing key 'username' was not overwritten, got %q, want %q",
+						string(tt.target.Data["username"]), "produser")
 				}
 			}
 
@@ -769,5 +783,270 @@ func TestCreateReplicatedSecret(t *testing.T) {
 	_, err := time.Parse(time.RFC3339, timestamp)
 	if err != nil {
 		t.Errorf("last-replicated-at is not valid RFC3339: %v", err)
+	}
+}
+
+func TestGetReplicatedFromAnnotation(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret *corev1.Secret
+		want   string
+	}{
+		{
+			name: "has replicated-from annotation",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						AnnotationReplicatedFrom: "production/db-credentials",
+					},
+				},
+			},
+			want: "production/db-credentials",
+		},
+		{
+			name: "no replicated-from annotation",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"other-annotation": "value",
+					},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "empty annotations",
+			secret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+			},
+			want: "",
+		},
+		{
+			name:   "nil annotations",
+			secret: &corev1.Secret{},
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetReplicatedFromAnnotation(tt.secret)
+			if got != tt.want {
+				t.Errorf("GetReplicatedFromAnnotation() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMutualConsentSecurityModel tests that replication requires consent from both sides (Q2)
+func TestMutualConsentSecurityModel(t *testing.T) {
+	tests := []struct {
+		name            string
+		sourceAllowlist string
+		targetNamespace string
+		expectAllowed   bool
+		description     string
+	}{
+		{
+			name:            "source allows, target requests - should succeed",
+			sourceAllowlist: "staging",
+			targetNamespace: "staging",
+			expectAllowed:   true,
+			description:     "Both sides consent",
+		},
+		{
+			name:            "source allows different namespace - should fail",
+			sourceAllowlist: "development",
+			targetNamespace: "staging",
+			expectAllowed:   false,
+			description:     "Source does not allow staging namespace",
+		},
+		{
+			name:            "source has no allowlist - should fail",
+			sourceAllowlist: "",
+			targetNamespace: "staging",
+			expectAllowed:   false,
+			description:     "Source must have replicatable-from-namespaces annotation",
+		},
+		{
+			name:            "wildcard allowlist - should succeed for any namespace",
+			sourceAllowlist: "*",
+			targetNamespace: "any-namespace",
+			expectAllowed:   true,
+			description:     "Wildcard * allows all namespaces",
+		},
+		{
+			name:            "pattern allowlist matches - should succeed",
+			sourceAllowlist: "env-*",
+			targetNamespace: "env-staging",
+			expectAllowed:   true,
+			description:     "Glob pattern matches target namespace",
+		},
+		{
+			name:            "pattern allowlist does not match - should fail",
+			sourceAllowlist: "env-*",
+			targetNamespace: "prod-staging",
+			expectAllowed:   false,
+			description:     "Glob pattern does not match target namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := ValidateReplication("source-ns", tt.sourceAllowlist, tt.targetNamespace)
+			if allowed != tt.expectAllowed {
+				t.Errorf("ValidateReplication() = %v, want %v. Description: %s", allowed, tt.expectAllowed, tt.description)
+			}
+			// Expect error when not allowed
+			if !tt.expectAllowed && err == nil {
+				t.Errorf("ValidateReplication() expected error when not allowed")
+			}
+		})
+	}
+}
+
+// TestPushBasedMultipleTargets tests comma-separated target namespaces (Q9)
+func TestPushBasedMultipleTargets(t *testing.T) {
+	tests := []struct {
+		name       string
+		annotation string
+		wantCount  int
+		wantFirst  string
+		wantLast   string
+	}{
+		{
+			name:       "single target",
+			annotation: "staging",
+			wantCount:  1,
+			wantFirst:  "staging",
+			wantLast:   "staging",
+		},
+		{
+			name:       "multiple targets comma-separated",
+			annotation: "staging,development,qa",
+			wantCount:  3,
+			wantFirst:  "staging",
+			wantLast:   "qa",
+		},
+		{
+			name:       "multiple targets with whitespace",
+			annotation: "staging , development , qa",
+			wantCount:  3,
+			wantFirst:  "staging",
+			wantLast:   "qa",
+		},
+		{
+			name:       "handles empty parts",
+			annotation: "staging,,development",
+			wantCount:  2,
+			wantFirst:  "staging",
+			wantLast:   "development",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			namespaces := ParseTargetNamespaces(tt.annotation)
+			if len(namespaces) != tt.wantCount {
+				t.Errorf("ParseTargetNamespaces() count = %d, want %d", len(namespaces), tt.wantCount)
+			}
+			if len(namespaces) > 0 {
+				if namespaces[0] != tt.wantFirst {
+					t.Errorf("first namespace = %q, want %q", namespaces[0], tt.wantFirst)
+				}
+				if namespaces[len(namespaces)-1] != tt.wantLast {
+					t.Errorf("last namespace = %q, want %q", namespaces[len(namespaces)-1], tt.wantLast)
+				}
+			}
+		})
+	}
+}
+
+// TestCharacterClassPatterns tests glob patterns with character classes (Spec requirement)
+func TestCharacterClassPatterns(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		pattern   string
+		want      bool
+	}{
+		// Character ranges [a-z]
+		{
+			name:      "[a-z] matches lowercase letter",
+			namespace: "namespace-a",
+			pattern:   "namespace-[a-z]",
+			want:      true,
+		},
+		{
+			name:      "[a-z] does not match uppercase",
+			namespace: "namespace-A",
+			pattern:   "namespace-[a-z]",
+			want:      false,
+		},
+		{
+			name:      "[a-z] does not match digit",
+			namespace: "namespace-5",
+			pattern:   "namespace-[a-z]",
+			want:      false,
+		},
+		// Character ranges [0-9]
+		{
+			name:      "[0-9] matches digit",
+			namespace: "ns-5",
+			pattern:   "ns-[0-9]",
+			want:      true,
+		},
+		{
+			name:      "[0-9] does not match letter",
+			namespace: "ns-a",
+			pattern:   "ns-[0-9]",
+			want:      false,
+		},
+		// Character sets [abc]
+		{
+			name:      "[abc] matches a",
+			namespace: "env-a",
+			pattern:   "env-[abc]",
+			want:      true,
+		},
+		{
+			name:      "[abc] matches c",
+			namespace: "env-c",
+			pattern:   "env-[abc]",
+			want:      true,
+		},
+		{
+			name:      "[abc] does not match d",
+			namespace: "env-d",
+			pattern:   "env-[abc]",
+			want:      false,
+		},
+		// Combined patterns
+		{
+			name:      "combined * and [0-9]",
+			namespace: "env-staging-1",
+			pattern:   "env-*-[0-9]",
+			want:      true,
+		},
+		{
+			name:      "multiple character classes",
+			namespace: "ns-a1",
+			pattern:   "ns-[a-z][0-9]",
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := MatchNamespace(tt.namespace, tt.pattern)
+			if err != nil {
+				t.Fatalf("MatchNamespace() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("MatchNamespace(%q, %q) = %v, want %v", tt.namespace, tt.pattern, got, tt.want)
+			}
+		})
 	}
 }

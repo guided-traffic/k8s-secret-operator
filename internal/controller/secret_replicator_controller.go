@@ -293,8 +293,14 @@ func (r *SecretReplicatorReconciler) handleDeletion(ctx context.Context, sourceS
 
 // SetupWithManager sets up the controller with the Manager
 func (r *SecretReplicatorReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Create predicate to only watch Secrets with replication annotations
-	replicationPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+	return r.SetupWithManagerAndName(mgr, "secret-replicator")
+}
+
+// SetupWithManagerAndName sets up the controller with the Manager using a custom name
+// This is useful for testing where multiple controllers may run in the same process
+func (r *SecretReplicatorReconciler) SetupWithManagerAndName(mgr ctrl.Manager, name string) error {
+	// Predicate for main reconciliation: only handle Secrets with pull or push annotations
+	mainPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		secret, ok := obj.(*corev1.Secret)
 		if !ok {
 			return false
@@ -307,28 +313,30 @@ func (r *SecretReplicatorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Watch Secrets with replication annotations
 		hasReplicateFrom := secret.Annotations[replicator.AnnotationReplicateFrom] != ""
 		hasReplicateTo := secret.Annotations[replicator.AnnotationReplicateTo] != ""
-		hasReplicatableFrom := secret.Annotations[replicator.AnnotationReplicatableFromNamespaces] != ""
 
-		return hasReplicateFrom || hasReplicateTo || hasReplicatableFrom
+		return hasReplicateFrom || hasReplicateTo
+	})
+
+	// Predicate for source Secrets: trigger target reconciliation when source changes
+	sourcePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		secret, ok := obj.(*corev1.Secret)
+		if !ok {
+			return false
+		}
+		// Only watch Secrets that could be sources (have replicatable-from-namespaces)
+		return secret.Annotations != nil &&
+			secret.Annotations[replicator.AnnotationReplicatableFromNamespaces] != ""
 	})
 
 	return ctrl.NewControllerManagedBy(mgr).
-		Named("secret-replicator").
-		For(&corev1.Secret{}).
-		WithEventFilter(replicationPredicate).
-		// Watch source Secrets to trigger reconciliation of target Secrets
+		Named(name).
+		// Watch Secrets with replicate-from or replicate-to annotations
+		For(&corev1.Secret{}, builder.WithPredicates(mainPredicate)).
+		// Watch source Secrets to trigger reconciliation of target Secrets when source changes
 		Watches(
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.findTargetsForSource),
-			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-				secret, ok := obj.(*corev1.Secret)
-				if !ok {
-					return false
-				}
-				// Only watch Secrets that could be sources (have replicatable-from-namespaces)
-				return secret.Annotations != nil &&
-					secret.Annotations[replicator.AnnotationReplicatableFromNamespaces] != ""
-			})),
+			builder.WithPredicates(sourcePredicate),
 		).
 		Complete(r)
 }
