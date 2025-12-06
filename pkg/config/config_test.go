@@ -19,6 +19,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -138,6 +139,25 @@ func TestLoadConfigInvalidYAML(t *testing.T) {
 	_, err := LoadConfig(configPath)
 	if err == nil {
 		t.Error("expected error for invalid YAML, got nil")
+	}
+}
+
+func TestLoadConfigUnreadableFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Create a directory with the same name as the config file
+	// This will cause os.ReadFile to fail
+	if err := os.Mkdir(configPath, 0755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Error("expected error when config path is a directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read config file") {
+		t.Errorf("expected 'failed to read config file' error, got: %v", err)
 	}
 }
 
@@ -705,5 +725,58 @@ defaults:
 				t.Errorf("expected secretReplicator %v, got %v", tt.expectedSecretReplicator, cfg.Features.SecretReplicator)
 			}
 		})
+	}
+}
+
+func TestDurationMarshalYAML(t *testing.T) {
+	d := Duration(10 * time.Minute)
+
+	result, err := d.MarshalYAML()
+	if err != nil {
+		t.Errorf("MarshalYAML() error = %v", err)
+	}
+
+	expected := "10m0s"
+	if result != expected {
+		t.Errorf("MarshalYAML() = %v, want %v", result, expected)
+	}
+}
+
+func TestDurationUnmarshalYAMLError(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Write config with invalid duration format
+	configContent := `
+defaults:
+  type: string
+  length: 32
+  string:
+    uppercase: true
+    lowercase: true
+    numbers: true
+rotation:
+  minInterval: "invalid-duration-format"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	_, err := LoadConfig(configPath)
+	if err == nil {
+		t.Error("expected error for invalid duration format, got nil")
+	}
+}
+
+func TestConfigValidateNegativeRotationMinInterval(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.Rotation.MinInterval = Duration(-5 * time.Minute)
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Error("expected error for negative rotation minInterval, got nil")
+	}
+	if !strings.Contains(err.Error(), "rotation minInterval must be non-negative") {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }

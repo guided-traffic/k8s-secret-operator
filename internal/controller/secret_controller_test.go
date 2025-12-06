@@ -1619,3 +1619,143 @@ func TestReconcileWithCustomCharset(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcilerNowWithoutClock(t *testing.T) {
+	// Test that now() works without Clock set (uses time.Now())
+	reconciler := &SecretReconciler{
+		Config: config.NewDefaultConfig(),
+		Clock:  nil, // No clock set
+	}
+
+	before := time.Now()
+	result := reconciler.now()
+	after := time.Now()
+
+	if result.Before(before) || result.After(after) {
+		t.Errorf("expected now() to return a time between %v and %v, got %v", before, after, result)
+	}
+}
+
+func TestCalculateNextRotationWithJustRotatedField(t *testing.T) {
+	// This tests the path where rotationCheck.timeUntilRotation is nil
+	// but rotationCheck.rotationInterval > 0 (field was just rotated)
+	cfg := config.NewDefaultConfig()
+	cfg.Rotation.MinInterval = config.Duration(1 * time.Minute)
+
+	reconciler := &SecretReconciler{
+		Config: cfg,
+	}
+
+	// Set generatedAt to now (just generated), so there's no timeUntilRotation
+	now := time.Now()
+	annotations := map[string]string{
+		AnnotationRotate: "10m",
+	}
+	fields := []string{"password"}
+
+	// When generatedAt is very recent, rotation is needed so timeUntilRotation is nil
+	// but we calculate based on rotationInterval
+	nextRotation := reconciler.calculateNextRotation(annotations, fields, &now)
+
+	if nextRotation == nil {
+		t.Error("expected nextRotation to be non-nil")
+		return
+	}
+
+	// Should be approximately 10 minutes
+	expected := 10 * time.Minute
+	tolerance := 1 * time.Second
+	diff := *nextRotation - expected
+	if diff < -tolerance || diff > tolerance {
+		t.Errorf("expected nextRotation ~%v, got %v", expected, *nextRotation)
+	}
+}
+
+func TestCalculateNextRotationWithMultipleFieldsDifferentIntervals(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Rotation.MinInterval = config.Duration(1 * time.Minute)
+
+	reconciler := &SecretReconciler{
+		Config: cfg,
+	}
+
+	// Generated 5 minutes ago
+	generatedAt := time.Now().Add(-5 * time.Minute)
+	annotations := map[string]string{
+		AnnotationRotatePrefix + "password": "10m", // 5 min until rotation
+		AnnotationRotatePrefix + "token":    "15m", // 10 min until rotation
+	}
+	fields := []string{"password", "token"}
+
+	nextRotation := reconciler.calculateNextRotation(annotations, fields, &generatedAt)
+
+	if nextRotation == nil {
+		t.Error("expected nextRotation to be non-nil")
+		return
+	}
+
+	// Should pick the minimum: 5 minutes (for password)
+	expected := 5 * time.Minute
+	tolerance := 1 * time.Second
+	diff := *nextRotation - expected
+	if diff < -tolerance || diff > tolerance {
+		t.Errorf("expected nextRotation ~%v, got %v", expected, *nextRotation)
+	}
+}
+
+func TestCalculateNextRotationSkipsFieldsWithErrors(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	cfg.Rotation.MinInterval = config.Duration(10 * time.Minute) // Higher than some fields
+
+	reconciler := &SecretReconciler{
+		Config: cfg,
+	}
+
+	generatedAt := time.Now().Add(-5 * time.Minute)
+	annotations := map[string]string{
+		AnnotationRotatePrefix + "password": "5m",  // Invalid: below minInterval
+		AnnotationRotatePrefix + "token":    "15m", // Valid: 10 min until rotation
+	}
+	fields := []string{"password", "token"}
+
+	nextRotation := reconciler.calculateNextRotation(annotations, fields, &generatedAt)
+
+	if nextRotation == nil {
+		t.Error("expected nextRotation to be non-nil")
+		return
+	}
+
+	// Should only consider the valid field (token): 10 min until rotation
+	expected := 10 * time.Minute
+	tolerance := 1 * time.Second
+	diff := *nextRotation - expected
+	if diff < -tolerance || diff > tolerance {
+		t.Errorf("expected nextRotation ~%v, got %v", expected, *nextRotation)
+	}
+}
+
+func TestReconcilerWithNilGeneratedAt(t *testing.T) {
+	// Test checkFieldRotation with nil generatedAt but valid rotation interval
+	cfg := config.NewDefaultConfig()
+	cfg.Rotation.MinInterval = config.Duration(1 * time.Minute)
+
+	reconciler := &SecretReconciler{
+		Config: cfg,
+	}
+
+	annotations := map[string]string{
+		AnnotationRotate: "10m",
+	}
+
+	result := reconciler.checkFieldRotation(annotations, "password", nil)
+
+	// With nil generatedAt, timeUntilRotation should be set to rotationInterval
+	if result.timeUntilRotation == nil {
+		t.Error("expected timeUntilRotation to be non-nil")
+		return
+	}
+
+	if *result.timeUntilRotation != 10*time.Minute {
+		t.Errorf("expected timeUntilRotation to be 10m, got %v", *result.timeUntilRotation)
+	}
+}

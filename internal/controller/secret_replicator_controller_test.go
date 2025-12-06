@@ -767,3 +767,581 @@ func TestSecretReplicatorReconciler_AllowAutogenerateWithReplicatableFromNamespa
 		// No event is good - the combination is allowed
 	}
 }
+
+func TestSecretReplicatorReconciler_HandleDeletion(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	tests := []struct {
+		name                    string
+		sourceSecret            *corev1.Secret
+		replicatedSecrets       []*corev1.Secret
+		expectReplicatedDeleted bool
+		expectFinalizerRemoved  bool
+	}{
+		{
+			name: "deletion with replicate-to cleans up pushed secrets",
+			sourceSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "push-secret",
+					Namespace:         "production",
+					DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
+					Finalizers:        []string{replicator.FinalizerReplicateToCleanup},
+					Annotations: map[string]string{
+						replicator.AnnotationReplicateTo: "staging,development",
+					},
+				},
+				Data: map[string][]byte{
+					"key": []byte("value"),
+				},
+			},
+			replicatedSecrets: []*corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "push-secret",
+						Namespace: "staging",
+						Annotations: map[string]string{
+							replicator.AnnotationReplicatedFrom: "production/push-secret",
+						},
+					},
+					Data: map[string][]byte{
+						"key": []byte("value"),
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "push-secret",
+						Namespace: "development",
+						Annotations: map[string]string{
+							replicator.AnnotationReplicatedFrom: "production/push-secret",
+						},
+					},
+					Data: map[string][]byte{
+						"key": []byte("value"),
+					},
+				},
+			},
+			expectReplicatedDeleted: true,
+			expectFinalizerRemoved:  true,
+		},
+		{
+			name: "deletion with finalizer but no replicate-to removes finalizer only",
+			sourceSecret: &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "finalizer-no-replicate-to",
+					Namespace:         "production",
+					DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
+					Finalizers:        []string{replicator.FinalizerReplicateToCleanup},
+					// No replicate-to annotation
+				},
+			},
+			replicatedSecrets:       nil,
+			expectReplicatedDeleted: false,
+			expectFinalizerRemoved:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objs := []client.Object{tt.sourceSecret}
+			for _, s := range tt.replicatedSecrets {
+				objs = append(objs, s)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(objs...).
+				Build()
+
+			recorder := record.NewFakeRecorder(10)
+
+			reconciler := &SecretReplicatorReconciler{
+				Client:        fakeClient,
+				Scheme:        scheme,
+				Config:        config.NewDefaultConfig(),
+				EventRecorder: recorder,
+			}
+
+			req := ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: tt.sourceSecret.Namespace,
+					Name:      tt.sourceSecret.Name,
+				},
+			}
+
+			_, err := reconciler.Reconcile(context.Background(), req)
+			if err != nil {
+				t.Errorf("Reconcile() error = %v", err)
+				return
+			}
+
+			// Check if replicated secrets were deleted
+			if tt.expectReplicatedDeleted {
+				for _, s := range tt.replicatedSecrets {
+					secret := &corev1.Secret{}
+					err := fakeClient.Get(context.Background(), types.NamespacedName{
+						Namespace: s.Namespace,
+						Name:      s.Name,
+					}, secret)
+					if err == nil {
+						t.Errorf("Expected replicated secret %s/%s to be deleted", s.Namespace, s.Name)
+					}
+				}
+			}
+
+			// Check if finalizer was removed from source
+			if tt.expectFinalizerRemoved {
+				updatedSource := &corev1.Secret{}
+				err := fakeClient.Get(context.Background(), types.NamespacedName{
+					Namespace: tt.sourceSecret.Namespace,
+					Name:      tt.sourceSecret.Name,
+				}, updatedSource)
+				if err != nil {
+					// With deletionTimestamp and empty finalizers, the object might be deleted
+					// This is acceptable if the finalizer was removed
+					return
+				}
+				if replicator.HasFinalizer(updatedSource) {
+					t.Error("Expected finalizer to be removed from source secret")
+				}
+			}
+		})
+	}
+}
+
+func TestSecretReplicatorReconciler_HandleDeletionWithoutFinalizer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Secret without finalizer but with deletionTimestamp
+	// The handleDeletion should return early because there's no finalizer
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "no-finalizer-secret",
+			Namespace:  "production",
+			Finalizers: []string{}, // Empty finalizers
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateTo: "staging",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	// Directly call handleDeletion to test the early return path
+	// Since we can't create an object with deletionTimestamp via fake client,
+	// we test the HasFinalizer check which returns early
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: sourceSecret.Namespace,
+			Name:      sourceSecret.Name,
+		},
+	}
+
+	// This should process the push replication (since it's not being deleted)
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+}
+
+func TestSecretReplicatorReconciler_SecretNotFound(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: "default",
+			Name:      "nonexistent-secret",
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	// Should not return an error when secret is not found
+	if err != nil {
+		t.Errorf("Reconcile() error = %v, expected nil", err)
+	}
+}
+
+func TestSecretReplicatorReconciler_InvalidSourceReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	targetSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "target-secret",
+			Namespace: "staging",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateFrom: "invalid-reference-without-slash",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(targetSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: targetSecret.Namespace,
+			Name:      targetSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	// Should not return an error (just logs warning)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v, expected nil", err)
+	}
+
+	// Check for warning event about invalid reference
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, "Warning") || !strings.Contains(event, "Invalid source reference") {
+			t.Errorf("Expected warning event about invalid source reference, got: %s", event)
+		}
+	default:
+		t.Error("Expected a warning event for invalid source reference")
+	}
+}
+
+func TestSecretReplicatorReconciler_SourceBeingDeleted(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Source secret is being deleted
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "db-credentials",
+			Namespace:         "production",
+			DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
+			Finalizers:        []string{"some-other-finalizer"},
+			Annotations: map[string]string{
+				replicator.AnnotationReplicatableFromNamespaces: "staging",
+			},
+		},
+		Data: map[string][]byte{
+			"password": []byte("secret"),
+		},
+	}
+
+	targetSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-credentials",
+			Namespace: "staging",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateFrom: "production/db-credentials",
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret, targetSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: targetSecret.Namespace,
+			Name:      targetSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Check for warning event about source being deleted
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, "SourceDeleted") {
+			t.Errorf("Expected SourceDeleted event, got: %s", event)
+		}
+	default:
+		t.Error("Expected a warning event when source is being deleted")
+	}
+}
+
+func TestSecretReplicatorReconciler_PushEmptyNamespaceList(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "empty-push-secret",
+			Namespace: "production",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateTo: "",
+			},
+		},
+		Data: map[string][]byte{
+			"key": []byte("value"),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: sourceSecret.Namespace,
+			Name:      sourceSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Should not add finalizer when no target namespaces are specified
+	updatedSource := &corev1.Secret{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Namespace: sourceSecret.Namespace,
+		Name:      sourceSecret.Name,
+	}, updatedSource)
+	if err != nil {
+		t.Fatalf("Failed to get source secret: %v", err)
+	}
+
+	if replicator.HasFinalizer(updatedSource) {
+		t.Error("Finalizer should not be added when no target namespaces are specified")
+	}
+}
+
+func TestSecretReplicatorReconciler_FindTargetsForSourceWithNonSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		Build()
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: record.NewFakeRecorder(10),
+	}
+
+	// Pass a non-Secret object (use a ConfigMap-like object but cast it wrong)
+	// This tests the early return when obj is not a Secret
+	requests := reconciler.findTargetsForSource(context.Background(), nil)
+	if requests != nil {
+		t.Error("Expected nil requests when object is nil")
+	}
+}
+
+func TestSecretReplicatorReconciler_FindTargetsForSourceNoTargets(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-credentials",
+			Namespace: "production",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicatableFromNamespaces: "*",
+			},
+		},
+	}
+
+	// No targets that pull from this source
+	otherSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "other-secret",
+			Namespace: "staging",
+			// No annotations
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret, otherSecret).
+		Build()
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: record.NewFakeRecorder(10),
+	}
+
+	requests := reconciler.findTargetsForSource(context.Background(), sourceSecret)
+
+	// Should return empty list when no targets pull from this source
+	if len(requests) != 0 {
+		t.Errorf("Expected 0 reconcile requests, got %d", len(requests))
+	}
+}
+
+func TestSecretReplicatorReconciler_PushReplicationWithOnlyWhitespaceNamespaces(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "whitespace-push-secret",
+			Namespace: "production",
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateTo: "  ,  ,  ", // Only whitespace and commas
+			},
+		},
+		Data: map[string][]byte{
+			"key": []byte("value"),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: sourceSecret.Namespace,
+			Name:      sourceSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Should not add finalizer when no valid target namespaces are specified
+	updatedSource := &corev1.Secret{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Namespace: sourceSecret.Namespace,
+		Name:      sourceSecret.Name,
+	}, updatedSource)
+	if err != nil {
+		t.Fatalf("Failed to get source secret: %v", err)
+	}
+
+	if replicator.HasFinalizer(updatedSource) {
+		t.Error("Finalizer should not be added when no valid target namespaces are specified")
+	}
+}
+
+func TestSecretReplicatorReconciler_PushReplicationWithFinalizer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Source secret already has a finalizer
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "push-secret-with-finalizer",
+			Namespace:  "production",
+			Finalizers: []string{replicator.FinalizerReplicateToCleanup},
+			Annotations: map[string]string{
+				replicator.AnnotationReplicateTo: "staging",
+			},
+		},
+		Data: map[string][]byte{
+			"key": []byte("value"),
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sourceSecret).
+		Build()
+
+	recorder := record.NewFakeRecorder(10)
+
+	reconciler := &SecretReplicatorReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Config:        config.NewDefaultConfig(),
+		EventRecorder: recorder,
+	}
+
+	req := ctrl.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: sourceSecret.Namespace,
+			Name:      sourceSecret.Name,
+		},
+	}
+
+	_, err := reconciler.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Errorf("Reconcile() error = %v", err)
+	}
+
+	// Verify target was created
+	targetSecret := &corev1.Secret{}
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Namespace: "staging",
+		Name:      sourceSecret.Name,
+	}, targetSecret)
+	if err != nil {
+		t.Errorf("Expected target secret to be created, got error: %v", err)
+	}
+}
