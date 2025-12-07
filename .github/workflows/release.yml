@@ -718,6 +718,15 @@ jobs:
           path: .github/badges/
         continue-on-error: true
 
+      - name: Verify coverage badge downloaded
+        run: |
+          if [ -f ".github/badges/coverage.json" ]; then
+            echo "✅ Coverage badge downloaded successfully"
+            cat .github/badges/coverage.json
+          else
+            echo "⚠️ Coverage badge not found, using existing file"
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
