@@ -4,8 +4,11 @@
     "config:recommended",
     ":assignee(hansfischer)",
     ":semanticCommits",
-    ":semanticCommitTypeAll(chore)"
+    ":automergeDigest",
+    ":automergeBranch"
   ],
+  "schedule": ["at any time"],
+  "timezone": "Europe/Berlin",
   "labels": [
     "dependencies"
   ],
