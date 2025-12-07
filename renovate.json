@@ -6,7 +6,9 @@
     ":semanticCommits",
     ":semanticCommitTypeAll(chore)"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "platformAutomerge": true,
   "automergeType": "pr",
   "automergeStrategy": "squash",
@@ -19,90 +21,169 @@
   "packageRules": [
     {
       "description": "Go version: group all Go version updates together to keep them in sync (Containerfile, go.mod, release-template.hbs)",
-      "matchDatasources": ["golang-version"],
+      "matchDatasources": [
+        "golang-version"
+      ],
       "groupName": "Go version",
       "groupSlug": "go-version"
     },
     {
       "description": "Go version: automerge minor and patch updates after CI passes",
-      "matchDatasources": ["golang-version"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "automerge": true
     },
     {
       "description": "Go version: require manual review for major updates",
-      "matchDatasources": ["golang-version"],
-      "matchUpdateTypes": ["major"],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["dependencies", "major-update"]
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     },
     {
       "description": "Go modules: automerge minor and patch updates after CI passes",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "require"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
       "automerge": true
     },
     {
       "description": "Go modules: require manual review for major updates",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "require"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["dependencies", "major-update"]
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     },
     {
       "description": "Docker base images (non-Go): automerge minor and patch updates",
-      "matchManagers": ["dockerfile"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
       "automerge": true
     },
     {
       "description": "Docker base images: require manual review for major updates",
-      "matchManagers": ["dockerfile"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["dependencies", "major-update"]
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     },
     {
       "description": "GitHub Actions: automerge minor and patch updates",
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
       "automerge": true
     },
     {
       "description": "GitHub Actions: require manual review for major updates",
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["dependencies", "major-update"]
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     },
     {
       "description": "Helm charts: automerge minor and patch updates",
-      "matchManagers": ["helm-values", "helmv3"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchManagers": [
+        "helm-values",
+        "helmv3"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "automerge": true
     },
     {
       "description": "Helm charts: require manual review for major updates",
-      "matchManagers": ["helm-values", "helmv3"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "helm-values",
+        "helmv3"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "labels": ["dependencies", "major-update"]
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
     },
     {
       "description": "Group Kubernetes-related Go dependencies",
-      "matchManagers": ["gomod"],
-      "matchPackagePatterns": ["^k8s.io/", "^sigs.k8s.io/"],
+      "matchManagers": [
+        "gomod"
+      ],
       "groupName": "Kubernetes Go modules",
-      "groupSlug": "k8s-go-modules"
+      "groupSlug": "k8s-go-modules",
+      "matchPackageNames": [
+        "/^k8s.io//",
+        "/^sigs.k8s.io//"
+      ]
     }
   ],
   "customManagers": [
     {
       "description": "Update Go version in Containerfile",
       "customType": "regex",
-      "fileMatch": ["^Containerfile$", "^Dockerfile$"],
+      "managerFilePatterns": [
+        "/^Containerfile$/",
+        "/^Dockerfile$/"
+      ],
       "matchStrings": [
         "FROM\\s+golang:(?<currentValue>[\\d.]+)-alpine"
       ],
@@ -113,7 +194,9 @@
     {
       "description": "Update Go version in go.mod",
       "customType": "regex",
-      "fileMatch": ["^go\\.mod$"],
+      "managerFilePatterns": [
+        "/^go\\.mod$/"
+      ],
       "matchStrings": [
         "\\ngo\\s+(?<currentValue>[\\d.]+)\\n"
       ],
@@ -124,7 +207,9 @@
     {
       "description": "Update Go version in release-template.hbs badge (major.minor only)",
       "customType": "regex",
-      "fileMatch": ["^\\.github/release-template\\.hbs$"],
+      "managerFilePatterns": [
+        "/^\\.github/release-template\\.hbs$/"
+      ],
       "matchStrings": [
         "go-(?<currentValue>\\d+\\.\\d+)-blue"
       ],
